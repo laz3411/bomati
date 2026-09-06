@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#c026d3" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.35" />
+    </filter>
+  </defs>
+  <!-- Background squircle -->
+  <rect width="512" height="512" rx="120" fill="url(#grad)" />
+  
+  <!-- Subtle inner circle rings -->
+  <circle cx="256" cy="256" r="200" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="8" />
+  <circle cx="256" cy="256" r="160" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="4" stroke-dasharray="10 10" />
+
+  <!-- App Logo B Symbol -->
+  <g filter="url(#shadow)">
+    <path d="M170 120 H280 C325 120 355 145 355 185 C355 210 340 230 315 240 C348 252 368 276 368 315 C368 362 330 392 280 392 H170 V120 Z M225 170 V232 H275 C298 232 310 220 310 202 C310 184 298 170 275 170 H225 Z M225 280 V342 H282 C308 342 320 328 320 310 C320 292 308 280 282 280 H225 Z" fill="#ffffff" />
+  </g>
+</svg>
