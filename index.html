@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>로블록스 실시간 레이더</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b0f19;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #e2e8f0;
+    }
+
+    #app {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #mapCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+
+    #mapCanvas:active {
+      cursor: grabbing;
+    }
+
+    /* 심플하고 깔끔한 미니 상태 뱃지 */
+    .status-hud {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 12px;
+      font-weight: 600;
+      color: #cbd5e1;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+      box-shadow: 0 0 6px currentColor;
+    }
+
+    .status-live { color: #10b981; }
+    .status-live .status-dot { background: #10b981; }
+
+    .status-waiting { color: #f59e0b; }
+    .status-waiting .status-dot { background: #f59e0b; }
+
+    .status-offline { color: #ef4444; }
+    .status-offline .status-dot { background: #ef4444; }
+
+    /* 플로팅 컨트롤 (줌 & 전체화면) */
+    .controls-hud {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+    }
+
+    .btn-hud {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      transition: all 0.2s;
+    }
+
+    .btn-hud:hover {
+      background: rgba(30, 41, 59, 0.9);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+
+    .btn-hud svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+    }
+  </style>
+
+  <!-- 웹뷰(APK) 및 file:// 완벽 호환 Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="mapCanvas"></canvas>
+
+    <!-- 실시간 상태 뱃지 (플레이어 수 표시) -->
+    <div id="statusHud" class="status-hud status-waiting">
+      <span class="status-dot"></span>
+      <span id="statusText">연결 대기 중...</span>
+    </div>
+
+    <!-- 우측 하단 미니 컨트롤 -->
+    <div class="controls-hud">
+      <button id="zoomInBtn" class="btn-hud" title="확대">+</button>
+      <button id="zoomOutBtn" class="btn-hud" title="축소">−</button>
+      <button id="resetViewBtn" class="btn-hud" title="화면 맞춤" style="font-size:12px;">⤢</button>
+      <button id="fullscreenBtn" class="btn-hud" title="전체 화면">
+        <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // 1. 고정 설정 (코드 내장 - UI 없음)
+    // ==========================================
+    const FIREBASE_DB_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+    const CONFIG = {
+      minX: -2838,
+      maxX: 1108,
+      minZ: 432,
+      maxZ: 2531,
+      invertX: true,      // X축 반전 기본 적용
+      invertZ: true,      // Z축 반전 기본 적용
+      invertArrowX: true  // 화살표 좌우반전 기본 적용
+    };
+
+    // ==========================================
+    // 2. 캔버스 및 뷰포트 초기화
+    // ==========================================
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    const app = document.getElementById('app');
+    const statusHud = document.getElementById('statusHud');
+    const statusText = document.getElementById('statusText');
+
+    const mapImg = new Image();
+    mapImg.src = 'image/realmap.png';
+    let mapLoaded = false;
+
+    let view = {
+      x: 0,
+      y: 0,
+      scale: 1,
+      minScale: 0.1,
+      maxScale: 6.0
+    };
+
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+
+    const playersMap = new Map();
+    const PLAYER_COLORS = [
+      '#ef4444', '#3b82f6', '#10b981', '#f59e0b', 
+      '#8b5cf6', '#ec4899', '#06b6d4', '#14b8a6', '#e11d48'
+    ];
+
+    function getPlayerColor(id) {
+      return PLAYER_COLORS[Math.abs(id || 0) % PLAYER_COLORS.length];
+    }
+
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = app.clientWidth * dpr;
+      canvas.height = app.clientHeight * dpr;
+      ctx.scale(dpr, dpr);
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    mapImg.onload = () => {
+      mapLoaded = true;
+      resetView();
+    };
+
+    function resetView() {
+      if (!mapLoaded) return;
+      const cw = app.clientWidth;
+      const ch = app.clientHeight;
+      const imgW = mapImg.width;
+      const imgH = mapImg.height;
+
+      const scaleW = (cw * 0.94) / imgW;
+      const scaleH = (ch * 0.94) / imgH;
+      view.scale = Math.min(scaleW, scaleH);
+
+      view.x = (cw - imgW * view.scale) / 2;
+      view.y = (ch - imgH * view.scale) / 2;
+    }
+
+    // ==========================================
+    // 3. 로블록스 좌표 -> 픽셀 변환
+    // ==========================================
+    function worldToMapPixel(rx, rz) {
+      let nx = (rx - CONFIG.minX) / (CONFIG.maxX - CONFIG.minX);
+      let nz = (rz - CONFIG.minZ) / (CONFIG.maxZ - CONFIG.minZ);
+
+      if (CONFIG.invertX) nx = 1 - nx;
+      if (CONFIG.invertZ) nz = 1 - nz;
+
+      return {
+        x: nx * mapImg.width,
+        y: nz * mapImg.height
+      };
+    }
+
+    // ==========================================
+    // 4. 60FPS 부드러운 보간 렌더링
+    // ==========================================
+    let pulseAngle = 0;
+
+    function render() {
+      const cw = app.clientWidth;
+      const ch = app.clientHeight;
+
+      ctx.clearRect(0, 0, cw, ch);
+
+      if (mapLoaded) {
+        ctx.save();
+        ctx.translate(view.x, view.y);
+        ctx.scale(view.scale, view.scale);
+
+        // 지도 렌더링
+        ctx.drawImage(mapImg, 0, 0);
+
+        // 플레이어 렌더링
+        pulseAngle += 0.06;
+        const pulseRadius = 12 + Math.sin(pulseAngle) * 4;
+
+        playersMap.forEach((player) => {
+          player.curX += (player.targetX - player.curX) * 0.2;
+          player.curZ += (player.targetZ - player.curZ) * 0.2;
+          player.curAngle += (player.targetAngle - player.curAngle) * 0.2;
+
+          const { x: px, y: py } = worldToMapPixel(player.curX, player.curZ);
+
+          // 펄스 링
+          ctx.beginPath();
+          ctx.arc(px, py, pulseRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = player.color + '77';
+          ctx.lineWidth = 2 / view.scale;
+          ctx.stroke();
+
+          // 시선 방향 화살표 (좌우반전 보정 적용)
+          if (typeof player.curAngle === 'number') {
+            ctx.save();
+            ctx.translate(px, py);
+
+            let drawAngle = player.curAngle;
+            if (CONFIG.invertArrowX) {
+              drawAngle = -drawAngle; // 요청하신 화살표 좌우반전
+            }
+
+            ctx.rotate(drawAngle);
+
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.moveTo(0, -16);
+            ctx.lineTo(7, -6);
+            ctx.lineTo(-7, -6);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+
+          // 플레이어 중앙 점
+          ctx.beginPath();
+          ctx.arc(px, py, 6.5, 0, Math.PI * 2);
+          ctx.fillStyle = player.color;
+          ctx.fill();
+          ctx.lineWidth = 2 / view.scale;
+          ctx.strokeStyle = '#ffffff';
+          ctx.stroke();
+
+          // 닉네임 태그
+          ctx.save();
+          const fontSize = Math.max(11, 13 / Math.sqrt(view.scale));
+          ctx.font = `bold ${fontSize}px sans-serif`;
+          const text = player.displayName || player.name;
+          const textWidth = ctx.measureText(text).width;
+
+          const labelX = px - textWidth / 2;
+          const labelY = py + 19;
+
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+          ctx.fillRect(labelX - 5, labelY - fontSize, textWidth + 10, fontSize + 5);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+          ctx.strokeRect(labelX - 5, labelY - fontSize, textWidth + 10, fontSize + 5);
+
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(text, labelX, labelY);
+          ctx.restore();
+        });
+
+        ctx.restore();
+      }
+
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+
+    // ==========================================
+    // 5. Firebase 실시간 데이터 수신
+    // ==========================================
+    function updateStatus(state, text) {
+      statusHud.className = `status-hud status-${state}`;
+      statusText.textContent = text;
+    }
+
+    try {
+      firebase.initializeApp({
+        databaseURL: FIREBASE_DB_URL
+      });
+
+      const db = firebase.database();
+      const playersRef = db.ref('players');
+
+      updateStatus('waiting', 'Firebase 연결됨 (대기 중)');
+
+      playersRef.on('value', (snapshot) => {
+        const val = snapshot.val();
+        if (!val) {
+          updateStatus('waiting', '접속 중인 플레이어 없음');
+          playersMap.clear();
+          return;
+        }
+
+        let list = [];
+        if (Array.isArray(val)) {
+          list = val.filter(p => p !== null && p !== undefined);
+        } else if (typeof val === 'object') {
+          list = Object.values(val);
+        }
+
+        updateStatus('live', `실시간 연결 (${list.length}명)`);
+        processUpdate(list);
+      }, (error) => {
+        console.error(error);
+        updateStatus('offline', 'DB 읽기 오류 (규칙 확인)');
+      });
+
+    } catch (e) {
+      console.error(e);
+      updateStatus('offline', 'Firebase 초기화 실패');
+    }
+
+    function processUpdate(list) {
+      const activeIds = new Set();
+      list.forEach(p => {
+        if (!p || p.x === undefined) return;
+        activeIds.add(p.id);
+
+        if (playersMap.has(p.id)) {
+          const existing = playersMap.get(p.id);
+          existing.targetX = p.x;
+          existing.targetZ = p.z;
+          existing.targetAngle = p.angle || 0;
+          existing.displayName = p.displayName;
+          existing.name = p.name;
+        } else {
+          playersMap.set(p.id, {
+            id: p.id,
+            name: p.name,
+            displayName: p.displayName,
+            curX: p.x,
+            curZ: p.z,
+            curAngle: p.angle || 0,
+            targetX: p.x,
+            targetZ: p.z,
+            targetAngle: p.angle || 0,
+            color: getPlayerColor(p.id)
+          });
+        }
+      });
+
+      for (const id of playersMap.keys()) {
+        if (!activeIds.has(id)) {
+          playersMap.delete(id);
+        }
+      }
+    }
+
+    // ==========================================
+    // 6. 마우스 / 터치 Pan & Zoom
+    // ==========================================
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      isDragging = true;
+      dragStartX = e.clientX - view.x;
+      dragStartY = e.clientY - view.y;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        view.x = e.clientX - dragStartX;
+        view.y = e.clientY - dragStartY;
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+      const newScale = Math.min(Math.max(view.scale * zoomFactor, view.minScale), view.maxScale);
+
+      view.x = mouseX - (mouseX - view.x) * (newScale / view.scale);
+      view.y = mouseY - (mouseY - view.y) * (newScale / view.scale);
+      view.scale = newScale;
+    }, { passive: false });
+
+    // 모바일 터치 드래그 지원
+    let touchStartDist = 0;
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        isDragging = true;
+        dragStartX = e.touches[0].clientX - view.x;
+        dragStartY = e.touches[0].clientY - view.y;
+      } else if (e.touches.length === 2) {
+        isDragging = false;
+        touchStartDist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+      }
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && isDragging) {
+        view.x = e.touches[0].clientX - dragStartX;
+        view.y = e.touches[0].clientY - dragStartY;
+      } else if (e.touches.length === 2) {
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        const factor = dist / (touchStartDist || dist);
+        view.scale = Math.min(Math.max(view.scale * factor, view.minScale), view.maxScale);
+        touchStartDist = dist;
+      }
+    });
+
+    canvas.addEventListener('touchend', () => {
+      isDragging = false;
+    });
+
+    // 미니 컨트롤 버튼
+    document.getElementById('zoomInBtn').addEventListener('click', () => {
+      const newScale = Math.min(view.scale * 1.25, view.maxScale);
+      const cx = app.clientWidth / 2;
+      const cy = app.clientHeight / 2;
+      view.x = cx - (cx - view.x) * (newScale / view.scale);
+      view.y = cy - (cy - view.y) * (newScale / view.scale);
+      view.scale = newScale;
+    });
+
+    document.getElementById('zoomOutBtn').addEventListener('click', () => {
+      const newScale = Math.max(view.scale * 0.8, view.minScale);
+      const cx = app.clientWidth / 2;
+      const cy = app.clientHeight / 2;
+      view.x = cx - (cx - view.x) * (newScale / view.scale);
+      view.y = cy - (cy - view.y) * (newScale / view.scale);
+      view.scale = newScale;
+    });
+
+    document.getElementById('resetViewBtn').addEventListener('click', resetView);
+
+    document.getElementById('fullscreenBtn').addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+
+    resizeCanvas();
+  </script>
+</body>
+</html>
