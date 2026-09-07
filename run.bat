@@ -1,19 +1,13 @@
 @echo off
 chcp 65001 > nul
-title 로블록스 실시간 레이더 중계 서버
+title Bomati GPS Radar
 
 echo ========================================================
-echo   로블록스 실시간 레이더 중계 서버 실행 중...
+echo   Bomati GPS Radar 실행 중...
+echo   Python 서버 없이 Firebase에서 바로 데이터를 읽습니다.
 echo ========================================================
 echo.
 
-start http://localhost:8000
-
-where python >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    python "%~dp0server.py"
-) else (
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" "%~dp0server.py"
-)
+start "" "%~dp0index.html"
 
 pause

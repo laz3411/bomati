@@ -227,9 +227,70 @@
     }
 
     // ==========================================
-    // 5. 플레이어(GPS) 데이터 (단일 사용자 전용)
+    // 5. 플레이어(GPS) 및 Roblox BUS 태그 차량 데이터
     // ==========================================
     let targetPlayer = null;
+    const buses = new Map();
+
+    function normalizeAngle(angle) {
+      if (typeof angle !== 'number' || Number.isNaN(angle)) return 0;
+      while (angle > Math.PI) angle -= Math.PI * 2;
+      while (angle < -Math.PI) angle += Math.PI * 2;
+      return angle;
+    }
+
+    function lerpAngle(current, target, amount) {
+      let diff = normalizeAngle(target - current);
+      return normalizeAngle(current + diff * amount);
+    }
+
+    function upsertBus(rawBus) {
+      if (!rawBus || rawBus.x === undefined || rawBus.z === undefined) return;
+
+      const id = String(rawBus.id || rawBus.name || `${rawBus.x},${rawBus.z}`);
+      const nextAngle = normalizeAngle(rawBus.angle || 0);
+      const existing = buses.get(id);
+
+      if (!existing) {
+        buses.set(id, {
+          id,
+          name: rawBus.name || '',
+          route: rawBus.route || '',
+          isHighFloor: rawBus.isHighFloor === true,
+          curX: Number(rawBus.x),
+          curZ: Number(rawBus.z),
+          curAngle: nextAngle,
+          targetX: Number(rawBus.x),
+          targetZ: Number(rawBus.z),
+          targetAngle: nextAngle,
+          lastSeen: Date.now()
+        });
+        return;
+      }
+
+      existing.name = rawBus.name || existing.name;
+      existing.route = rawBus.route || existing.route;
+      existing.isHighFloor = rawBus.isHighFloor === true;
+      existing.targetX = Number(rawBus.x);
+      existing.targetZ = Number(rawBus.z);
+      existing.targetAngle = nextAngle;
+      existing.lastSeen = Date.now();
+    }
+
+    function replaceBuses(rawBuses) {
+      const liveIds = new Set();
+      (rawBuses || []).forEach((bus) => {
+        const id = String(bus.id || bus.name || `${bus.x},${bus.z}`);
+        liveIds.add(id);
+        upsertBus(bus);
+      });
+
+      for (const [id, bus] of buses) {
+        if (!liveIds.has(id) || Date.now() - bus.lastSeen > 5000) {
+          buses.delete(id);
+        }
+      }
+    }
 
     // ==========================================
     // 6. 60FPS 내비게이션 렌더링 루프
@@ -250,7 +311,13 @@
         // 부드러운 위치/각도 보간 (Lerp)
         targetPlayer.curX += (targetPlayer.targetX - targetPlayer.curX) * 0.22;
         targetPlayer.curZ += (targetPlayer.targetZ - targetPlayer.curZ) * 0.22;
-        targetPlayer.curAngle += (targetPlayer.targetAngle - targetPlayer.curAngle) * 0.22;
+        targetPlayer.curAngle = lerpAngle(targetPlayer.curAngle, targetPlayer.targetAngle, 0.22);
+      }
+
+      for (const bus of buses.values()) {
+        bus.curX += (bus.targetX - bus.curX) * 0.2;
+        bus.curZ += (bus.targetZ - bus.curZ) * 0.2;
+        bus.curAngle = lerpAngle(bus.curAngle, bus.targetAngle, 0.2);
       }
 
       ctx.save();
@@ -280,6 +347,8 @@
         // 지도 렌더링
         ctx.drawImage(mapImg, 0, 0);
 
+        drawBusMarkers(ctx);
+
         // GPS 마커 렌더링
         drawGpsMarker(ctx, px, py, targetPlayer.curAngle);
         ctx.restore();
@@ -291,6 +360,8 @@
 
         ctx.drawImage(mapImg, 0, 0);
 
+        drawBusMarkers(ctx);
+
         if (targetPlayer) {
           const { x: px, y: py } = worldToMap(targetPlayer.curX, targetPlayer.curZ);
           drawGpsMarker(ctx, px, py, targetPlayer.curAngle);
@@ -298,6 +369,85 @@
 
         ctx.restore();
       }
+    }
+
+    function drawBusMarkers(ctx) {
+      for (const bus of buses.values()) {
+        const { x, y } = worldToMap(bus.curX, bus.curZ);
+        drawBusMarker(ctx, x, y, bus.curAngle, bus);
+      }
+    }
+
+    function drawBusMarker(ctx, px, py, angle, bus) {
+      const width = 15;
+      const height = 36;
+      const routeText = String(bus.route || bus.name || 'BUS').slice(0, 8);
+      const floorText = bus.isHighFloor ? '고상' : '저상';
+      const fill = bus.isHighFloor ? '#f97316' : '#16a34a';
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(CONFIG.invertArrowX ? -angle : angle);
+
+      // 진행 방향을 길쭉한 차체와 앞쪽 흰 선으로 표현합니다.
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.42)';
+      ctx.fillRect(-width / 2 + 1.6, -height / 2 + 1.8, width, height);
+
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.1 / viewScale;
+      roundRect(ctx, -width / 2, -height / 2, width, height, 2.5);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-width / 2 + 2.2, -height / 2 + 2.8, width - 4.4, 3);
+
+      ctx.font = `${Math.max(8 / viewScale, 4.5)}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 2 / viewScale;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.78)';
+      ctx.fillStyle = '#ffffff';
+      ctx.save();
+      ctx.rotate(-Math.PI / 2);
+      ctx.strokeText(routeText, 0, 1);
+      ctx.fillText(routeText, 0, 1);
+      ctx.restore();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.beginPath();
+      ctx.moveTo(0, -height / 2 - 7);
+      ctx.lineTo(5.2, -height / 2 - 1);
+      ctx.lineTo(-5.2, -height / 2 - 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.font = `${Math.max(7 / viewScale, 4.5)}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 2.4 / viewScale;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeText(floorText, px, py + 12 / viewScale);
+      ctx.fillText(floorText, px, py + 12 / viewScale);
+      ctx.restore();
+    }
+
+    function roundRect(ctx, x, y, width, height, radius) {
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + width - radius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+      ctx.lineTo(x + width, y + height - radius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+      ctx.lineTo(x + radius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
     }
 
     // 세련된 모바일 GPS 내비게이션 위치 마커 (크기 축소 & 닉네임 미표시)
@@ -352,16 +502,14 @@
     try {
       firebase.initializeApp({ databaseURL: FIREBASE_DB_URL });
       const db = firebase.database();
-      const playersRef = db.ref('players');
 
-      playersRef.on('value', (snap) => {
-        const val = snap.val();
-        if (!val) {
-          targetPlayer = null;
-          return;
-        }
+      function normalizeList(value) {
+        if (!value) return [];
+        return Array.isArray(value) ? value.filter(Boolean) : Object.values(value).filter(Boolean);
+      }
 
-        let list = Array.isArray(val) ? val.filter(Boolean) : Object.values(val);
+      function updateTargetPlayer(players) {
+        let list = normalizeList(players);
         if (list.length === 0) {
           targetPlayer = null;
           return;
@@ -391,6 +539,23 @@
             targetPlayer.targetAngle = found.angle || 0;
           }
         }
+      }
+
+      db.ref('radar').on('value', (snap) => {
+        const val = snap.val();
+        if (!val) {
+          targetPlayer = null;
+          replaceBuses([]);
+          return;
+        }
+
+        updateTargetPlayer(val.players);
+        replaceBuses(normalizeList(val.buses));
+      });
+
+      // 예전 Roblox 스크립트가 /players만 보내는 경우에도 GPS는 계속 동작합니다.
+      db.ref('players').on('value', (snap) => {
+        updateTargetPlayer(snap.val());
       });
     } catch (e) {
       console.error("Firebase 초기화 에러:", e);
