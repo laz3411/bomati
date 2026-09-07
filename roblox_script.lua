@@ -67,6 +67,32 @@ local function getVehicleCFrame(model)
     return model:GetPivot()
 end
 
+local function findFirstMovingPart(model)
+    if model.PrimaryPart then
+        return model.PrimaryPart
+    end
+
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("VehicleSeat") or descendant:IsA("Seat") then
+            return descendant
+        end
+    end
+
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("BasePart") and not descendant.Anchored then
+            return descendant.AssemblyRootPart or descendant
+        end
+    end
+
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            return descendant
+        end
+    end
+
+    return nil
+end
+
 local function getBusParts(model)
     local frontPart = findTaggedDescendant(model, FRONT_TAGS)
     local backPart = findTaggedDescendant(model, BACK_TAGS)
@@ -74,29 +100,44 @@ local function getBusParts(model)
     return frontPart, backPart
 end
 
+local function getBusPosition(model, taggedInstance)
+    if taggedInstance:IsA("BasePart") then
+        local rootPart = taggedInstance.AssemblyRootPart
+        if rootPart then
+            return rootPart.Position, rootPart.Name, rootPart.CFrame
+        end
+
+        return taggedInstance.Position, taggedInstance.Name, taggedInstance.CFrame
+    end
+
+    local movingPart = findFirstMovingPart(model)
+    if movingPart then
+        local rootPart = movingPart.AssemblyRootPart
+        if rootPart then
+            return rootPart.Position, rootPart.Name, rootPart.CFrame
+        end
+
+        return movingPart.Position, movingPart.Name, movingPart.CFrame
+    end
+
+    local boundingCFrame = model:GetBoundingBox()
+    return boundingCFrame.Position, "BoundingBox", boundingCFrame
+end
+
 local function getBusPose(model, taggedInstance)
     local fallbackCFrame = getVehicleCFrame(model)
     local frontPart, backPart = getBusParts(model)
+    local position, positionPartName, positionCFrame = getBusPosition(model, taggedInstance)
 
     if frontPart and backPart then
         local delta = frontPart.Position - backPart.Position
         if delta.Magnitude > 0.05 then
-            local center = backPart.Position + (delta * 0.5)
-            return center, math.atan2(delta.X, delta.Z), frontPart.Name, backPart.Name
+            return position, math.atan2(delta.X, delta.Z), frontPart.Name, backPart.Name, positionPartName
         end
     end
 
-    local position
-    if taggedInstance:IsA("BasePart") then
-        position = taggedInstance.Position
-    elseif model.PrimaryPart then
-        position = model.PrimaryPart.Position
-    else
-        position = fallbackCFrame.Position
-    end
-
-    local lookVector = fallbackCFrame.LookVector
-    return position, math.atan2(lookVector.X, lookVector.Z), frontPart and frontPart.Name or nil, backPart and backPart.Name or nil
+    local lookVector = (positionCFrame or fallbackCFrame).LookVector
+    return position, math.atan2(lookVector.X, lookVector.Z), frontPart and frontPart.Name or nil, backPart and backPart.Name or nil, positionPartName
 end
 
 local function collectPlayersData()
@@ -141,7 +182,7 @@ local function collectBusData()
         if model and not seenModels[model] then
             seenModels[model] = true
 
-            local pos, angle, frontPartName, backPartName = getBusPose(model, tagged)
+            local pos, angle, frontPartName, backPartName, positionPartName = getBusPose(model, tagged)
             local isHighFloor = getFirstAttribute(model, { "isHighFloor", "IsHighFloor", "highFloor", "HighFloor", "High", "고상" }, false)
 
             table.insert(busesData, {
@@ -156,6 +197,7 @@ local function collectBusData()
                 floorType = isHighFloor == true and "high" or "low",
                 frontPart = frontPartName,
                 backPart = backPartName,
+                positionPart = positionPartName,
                 timestamp = os.time()
             })
         end
