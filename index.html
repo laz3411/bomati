@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Bomati GPS Radar</title>
   <style>
     * {
@@ -17,20 +17,23 @@
     body, html {
       width: 100%;
       height: 100%;
-      background: #000;
+      height: 100dvh;
+      background: #0b0f19;
       overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: block;
+      margin: 0;
+      padding: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
 
-    /* 9:16 세로 모바일 전용 뷰포트 */
+    /* 기기 화면에 맞춘 전체화면 반응형 뷰포트 */
     #viewport {
       position: relative;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
       overflow: hidden;
       background: #0b0f19;
-      box-shadow: 0 0 40px rgba(0, 0, 0, 0.9);
     }
 
     #mapCanvas {
@@ -42,11 +45,11 @@
       touch-action: none;
     }
 
-    /* 우측 하단 플로팅 컨트롤 */
+    /* 우측 하단 플로팅 컨트롤 (모바일 Safe Area 반영) */
     .controls-fab {
       position: absolute;
-      bottom: 24px;
-      right: 18px;
+      bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+      right: calc(18px + env(safe-area-inset-right, 0px));
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -94,10 +97,10 @@
       color: #fff;
     }
 
-    /* 자유 이동 안내 토스트 */
+    /* 자유 이동 안내 토스트 (모바일 Safe Area 반영) */
     .toast {
       position: absolute;
-      bottom: 82px;
+      bottom: calc(82px + env(safe-area-inset-bottom, 0px));
       left: 50%;
       transform: translateX(-50%);
       padding: 7px 18px;
@@ -162,7 +165,7 @@
     };
 
     // ==========================================
-    // 2. 9:16 모바일 종횡비 뷰포트
+    // 2. 기기 화면 맞춤 반응형 뷰포트
     // ==========================================
     const vpEl = document.getElementById('viewport');
     const canvas = document.getElementById('mapCanvas');
@@ -170,32 +173,32 @@
     let vW = 0, vH = 0;
 
     function applyViewport() {
-      const sw = window.innerWidth;
-      const sh = window.innerHeight;
-      let vw, vh;
-
-      // 9:16 비율 (세로 모바일)
-      if (sw / sh > 9 / 16) {
-        vh = sh;
-        vw = Math.round(vh * 9 / 16);
-      } else {
-        vw = sw;
-        vh = Math.round(vw * 16 / 9);
-      }
+      // visualViewport를 우선 감지하여 모바일 주소창/하단바/가상키보드 변화에 대응
+      const vw = window.visualViewport ? Math.round(window.visualViewport.width) : window.innerWidth;
+      const vh = window.visualViewport ? Math.round(window.visualViewport.height) : window.innerHeight;
 
       vpEl.style.width = vw + 'px';
       vpEl.style.height = vh + 'px';
 
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = vw * dpr;
-      canvas.height = vh * dpr;
-      ctx.scale(dpr, dpr);
+      canvas.width = Math.round(vw * dpr);
+      canvas.height = Math.round(vh * dpr);
+      canvas.style.width = vw + 'px';
+      canvas.style.height = vh + 'px';
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       vW = vw;
       vH = vh;
     }
 
     window.addEventListener('resize', applyViewport);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(applyViewport, 150);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', applyViewport);
+    }
     applyViewport();
 
     // ==========================================
@@ -211,8 +214,12 @@
 
     mapImg.onload = () => {
       mapLoaded = true;
+      const currentVW = vW || window.innerWidth;
+      const currentVH = vH || window.innerHeight;
       // 내비게이션 앱에 맞게 적당히 가까이 당겨진 기본 줌 (3.2배)
-      viewScale = (Math.min(vW, vH) / Math.min(mapImg.width, mapImg.height)) * 3.2;
+      viewScale = (Math.min(currentVW, currentVH) / Math.min(mapImg.width, mapImg.height)) * 3.2;
+      viewX = (currentVW - mapImg.width * viewScale) / 2;
+      viewY = (currentVH - mapImg.height * viewScale) / 2;
     };
 
     // ==========================================
@@ -569,6 +576,11 @@
 
     function unlockToFreeMove() {
       if (isLocked) {
+        if (targetPlayer) {
+          const { x: px, y: py } = worldToMap(targetPlayer.curX, targetPlayer.curZ);
+          viewX = vW / 2 - px * viewScale;
+          viewY = (vH * 0.58) - py * viewScale;
+        }
         isLocked = false;
         viewRotation = 0;
         lockBtn.classList.remove('active');
@@ -594,9 +606,9 @@
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
       isDrag = true;
+      unlockToFreeMove();
       dragSX = e.clientX - viewX;
       dragSY = e.clientY - viewY;
-      unlockToFreeMove();
     });
 
     canvas.addEventListener('pointermove', (e) => {
