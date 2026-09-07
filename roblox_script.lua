@@ -212,6 +212,60 @@ local function collectBusData()
     return busesData
 end
 
+local function findTargetPlayer()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
+            return player
+        end
+    end
+
+    return nil
+end
+
+local function findBusModelForSeat(seatPart)
+    for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
+        local model = getVehicleModel(tagged)
+        if model and seatPart:IsDescendantOf(model) then
+            return model, tagged
+        end
+    end
+
+    return nil, nil
+end
+
+-- 선택한 플레이어가 탄 BUS의 상태를 하차벨 브리지에 전달합니다.
+local function collectBellContext()
+    local player = findTargetPlayer()
+    local character = player and player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local seatPart = humanoid and humanoid.SeatPart
+
+    if not seatPart then
+        return { active = false, timestamp = DateTime.now().UnixTimestampMillis }
+    end
+
+    local model, tagged = findBusModelForSeat(seatPart)
+    if not model then
+        return { active = false, timestamp = DateTime.now().UnixTimestampMillis }
+    end
+
+    local position = getBusPosition(model, tagged)
+    local isHighFloor = getFirstAttribute(model, { "isHighFloor", "IsHighFloor", "highFloor", "HighFloor", "High", "고상" }, false) == true
+
+    return {
+        active = true,
+        mode = isHighFloor and "high" or "low",
+        busId = model:GetFullName(),
+        busName = model.Name,
+        route = tostring(getFirstAttribute(model, { "route", "Route", "ROUTE" }, "")),
+        isHighFloor = isHighFloor,
+        x = round1(position.X),
+        y = round1(position.Y),
+        z = round1(position.Z),
+        timestamp = DateTime.now().UnixTimestampMillis
+    }
+end
+
 task.spawn(function()
     while RunService:IsRunning() do
         if not isSending then
@@ -220,6 +274,7 @@ task.spawn(function()
             local radarData = {
                 players = playersData,
                 buses = busesData,
+                bell = collectBellContext(),
                 timestamp = DateTime.now().UnixTimestampMillis
             }
 
