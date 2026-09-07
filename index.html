@@ -149,9 +149,9 @@
     // ==========================================
     const FIREBASE_DB_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app";
 
-    // ★ 발표 눈속임용 대상 닉네임 (본인 닉네임 지정)
-    // 지정된 유저만 지도에 단독으로 뜨며, 다른 사람은 아예 표시되지 않습니다.
-    const TARGET_USER_NAME = "laz3411";
+    // Roblox의 실제 영어 사용자명(Player.Name)을 넣으세요. 표시명(DisplayName)은 사용하지 않습니다.
+    // 이 계정만 지도에 표시됩니다.
+    const TARGET_ROBLOX_USER_NAME = "laz3411";
 
     const CONFIG = {
       minX: -2838, maxX: 1108,
@@ -509,35 +509,31 @@
       }
 
       function updateTargetPlayer(players) {
-        let list = normalizeList(players);
-        if (list.length === 0) {
+        const list = normalizeList(players);
+        const targetName = TARGET_ROBLOX_USER_NAME.toLowerCase();
+        const found = list.find((player) =>
+          typeof player.name === 'string' && player.name.toLowerCase() === targetName
+        );
+
+        if (!found || !Number.isFinite(Number(found.x)) || !Number.isFinite(Number(found.z))) {
           targetPlayer = null;
           return;
         }
 
-        // 발표 눈속임용: 지정된 TARGET_USER_NAME만 찾아서 추적
-        let found = list.find(p => 
-          (p.name && p.name.toLowerCase() === TARGET_USER_NAME.toLowerCase()) ||
-          (p.displayName && p.displayName.toLowerCase() === TARGET_USER_NAME.toLowerCase())
-        );
+        const x = Number(found.x);
+        const z = Number(found.z);
+        const angle = Number(found.angle) || 0;
 
-        // 혹시 닉네임이 다르더라도 끊기지 않도록 첫 번째 플레이어로 유연하게 대체
-        if (!found && list.length > 0) {
-          found = list[0];
-        }
-
-        if (found && found.x !== undefined) {
-          if (!targetPlayer) {
-            targetPlayer = {
-              id: found.id,
-              curX: found.x, curZ: found.z, curAngle: found.angle || 0,
-              targetX: found.x, targetZ: found.z, targetAngle: found.angle || 0
-            };
-          } else {
-            targetPlayer.targetX = found.x;
-            targetPlayer.targetZ = found.z;
-            targetPlayer.targetAngle = found.angle || 0;
-          }
+        if (!targetPlayer) {
+          targetPlayer = {
+            id: found.id,
+            curX: x, curZ: z, curAngle: angle,
+            targetX: x, targetZ: z, targetAngle: angle
+          };
+        } else {
+          targetPlayer.targetX = x;
+          targetPlayer.targetZ = z;
+          targetPlayer.targetAngle = angle;
         }
       }
 
@@ -553,10 +549,6 @@
         replaceBuses(normalizeList(val.buses));
       });
 
-      // 예전 Roblox 스크립트가 /players만 보내는 경우에도 GPS는 계속 동작합니다.
-      db.ref('players').on('value', (snap) => {
-        updateTargetPlayer(snap.val());
-      });
     } catch (e) {
       console.error("Firebase 초기화 에러:", e);
     }

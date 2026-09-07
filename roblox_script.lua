@@ -14,7 +14,9 @@ local CollectionService = game:GetService("CollectionService")
 -- 사용자 지정 Firebase Realtime Database URL
 local FIREBASE_DATABASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app"
 local RADAR_ENDPOINT = FIREBASE_DATABASE_URL .. "/radar.json"
-local LEGACY_PLAYERS_ENDPOINT = FIREBASE_DATABASE_URL .. "/players.json"
+
+-- 지도에 표시할 실제 Roblox 사용자명(Player.Name)입니다. 표시명(DisplayName)이 아닙니다.
+local TARGET_ROBLOX_USER_NAME = "laz3411"
 
 -- 전송 주기 (초당 약 3회)
 local SEND_INTERVAL = 0.35
@@ -144,9 +146,13 @@ local function collectPlayersData()
     local playersData = {}
 
     for _, player in ipairs(Players:GetPlayers()) do
-        local char = player.Character
-        if char and char:FindFirstChild("HumanoidRootPart") then
-            local hrp = char.HumanoidRootPart
+        if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
+            local char = player.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then
+                continue
+            end
+
             local humanoid = char:FindFirstChild("Humanoid")
             local pos = hrp.Position
             local lookVector = hrp.CFrame.LookVector
@@ -165,7 +171,7 @@ local function collectPlayersData()
                 angle = angle,
                 health = math.round(health),
                 maxHealth = math.round(maxHealth),
-                timestamp = os.time()
+                timestamp = DateTime.now().UnixTimestampMillis
             })
         end
     end
@@ -198,7 +204,7 @@ local function collectBusData()
                 frontPart = frontPartName,
                 backPart = backPartName,
                 positionPart = positionPartName,
-                timestamp = os.time()
+                timestamp = DateTime.now().UnixTimestampMillis
             })
         end
     end
@@ -214,7 +220,7 @@ task.spawn(function()
             local radarData = {
                 players = playersData,
                 buses = busesData,
-                timestamp = os.time()
+                timestamp = DateTime.now().UnixTimestampMillis
             }
 
             isSending = true
@@ -227,19 +233,15 @@ task.spawn(function()
                         Body = HttpService:JSONEncode(radarData)
                     })
 
-                    HttpService:RequestAsync({
-                        Url = LEGACY_PLAYERS_ENDPOINT,
-                        Method = "PUT",
-                        Headers = { ["Content-Type"] = "application/json" },
-                        Body = HttpService:JSONEncode(playersData)
-                    })
-
-                    return radarResponse
+                    if not radarResponse.Success then
+                        error(string.format("Firebase HTTP %s: %s", radarResponse.StatusCode, radarResponse.StatusMessage))
+                    end
                 end)
 
                 isSending = false
 
                 if not success then
+                    warn("[로블록스 레이더] Firebase 전송 실패:", err)
                     -- 실패 시 3초 대기 (로블록스 렉 방지)
                     task.wait(3.0)
                 end
