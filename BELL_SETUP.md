@@ -1,11 +1,35 @@
-# Roblox 하차벨 연결
+# Roblox 실제 하차벨(피지컬 컴퓨팅) 연동 가이드
 
-1. `roblox_script.lua`을 `ServerScriptService`의 Script에 붙여넣고, `TARGET_ROBLOX_USER_NAME`을 실제 Roblox 영어 사용자명으로 맞춥니다.
-2. 버스 Model 또는 그 안의 움직이는 Part에 `BUS` 태그를 붙입니다. 버스 Model의 Boolean Attribute `isHighFloor`는 `true`면 고상, `false`면 저상입니다.
-3. `micropython_bell_controller.py`을 장치의 `main.py`로 업로드합니다. USB 시리얼 속도는 115200입니다.
-4. PC에서 `py -m pip install -r requirements.txt`를 한 번 실행한 뒤, 장치 포트에 맞춰 `py bell_firebase_bridge.py --port COM5`를 실행합니다.
-5. 지정 플레이어가 `BUS` 태그 차량의 Seat 또는 VehicleSeat에 앉으면 장치가 자동으로 `MODE HIGH` 또는 `MODE LOW`로 전환됩니다. 하차하면 `MODE IDLE`로 리셋됩니다.
+## 동작 원리
+1. **탑승 중일 때만 작동**: 로블록스에서 버스에 탑승(좌석 착석, 버스 바닥 서있기, 버스 내부 공간 진입)했을 때만 마이크로파이썬 하차벨 기능이 활성화됩니다.
+2. **하차 시 즉시 소등 및 초기화**: 버스에서 내리면(`active = false`) 하차벨 장치로 즉시 `MODE IDLE` 신호가 전송되어 **모든 하차벨 불(LED/릴레이)과 부저 소리가 꺼지고 완전히 리셋되어 탑승 대기 상태**로 돌아갑니다.
+3. **대기 중 누름 방지**: 버스에 타지 않은 대기 상태에서는 실제 하차벨을 눌러도 불이 켜지거나 소리가 나지 않으며 신호가 무시됩니다.
 
-버튼을 누르면 Firebase `/bell/events`에 기록이 추가되고, `/bell/latest`에는 가장 최근 이벤트가 저장됩니다. 두 값에는 버튼 종류와 탑승 버스의 노선, 고상 여부, 최신 `x/y/z` 좌표가 들어갑니다.
+---
 
-Firebase 규칙은 Roblox와 브리지 PC가 `/radar`, `/bell`에 읽기·쓰기를 할 수 있어야 합니다. 실제 공개 서비스에서는 인증 기반 규칙으로 제한하세요.
+## 설정 및 사용 방법
+
+1. **로블록스 스튜디오 설정**:
+   - `roblox_script.lua`를 `ServerScriptService`의 Script에 붙여넣습니다.
+   - 상단 `TARGET_ROBLOX_USER_NAME`에 본인의 로블록스 영어 닉네임을 입력합니다. (스튜디오에서 혼자 테스트할 때는 자동으로 감지됩니다.)
+   - 버스 Model 또는 그 안의 Part에 CollectionService 태그 `BUS`를 붙입니다.
+   - 버스 Model에 Attribute `isHighFloor` (Boolean)를 추가할 수 있습니다 (`true`: 고상버스, `false`: 저상버스).
+
+2. **마이크로파이썬 장비 설정 (라즈베리파이 피코 / ESP32 등)**:
+   - `micropython_bell_controller.py`를 피지컬 컴퓨팅 장치의 `main.py`로 업로드합니다.
+   - 핀 배선:
+     - `Pin 14`: A벨 버튼 입력 (구형 고상벨 풀다운)
+     - `Pin 15`: B벨 버튼 및 내부 LED 신호선 (현대 신형 저상벨 풀업/Active-LOW)
+     - `Pin 16`: 하차벨 조명 릴레이 제어선 (Active-LOW 릴레이)
+     - `Pin 17`: A벨 부저 (PWM)
+     - `Pin 18`: B벨 부저 (PWM)
+
+3. **PC 브리지 실행**:
+   - 필요한 패키지 설치: `py -m pip install -r requirements.txt`
+   - 장치를 USB로 PC에 연결한 후, `run_bridge.bat`을 더블 클릭해 실행합니다. (COM 포트가 자동 감지됩니다. 특정 포트를 원할 경우 `py bell_firebase_bridge.py --port COM5` 형태로 실행)
+
+4. **탑승 및 하차 테스트**:
+   - 로블록스에서 버스에 타면 PC 브리지에 `[장치 전송] MODE LOW/HIGH -> 탑승 활성화`가 뜨며 하차벨을 누를 수 있게 됩니다.
+   - 하차벨을 누르면 버스 특유의 딩동 소리가 나고 하차벨 불이 켜지며 Firebase로 위치와 정보가 전송됩니다.
+   - 버스에서 내리면 브리지에 `[장치 전송] MODE IDLE -> 하차/미탑승 (소등 및 대기 리셋)`이 뜨며 **모든 불과 소리가 꺼지고 초기화**됩니다.
+

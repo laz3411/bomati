@@ -54,6 +54,18 @@ local function findTaggedDescendant(root, tagNames)
 end
 
 local function getVehicleModel(instance)
+    if instance:IsA("Model") and CollectionService:HasTag(instance, "BUS") then
+        return instance
+    end
+
+    local cur = instance
+    while cur and cur ~= workspace and cur ~= game do
+        if cur:IsA("Model") and CollectionService:HasTag(cur, "BUS") then
+            return cur
+        end
+        cur = cur.Parent
+    end
+
     if instance:IsA("Model") then
         return instance
     end
@@ -219,6 +231,12 @@ local function findTargetPlayer()
         end
     end
 
+    -- 스튜디오 테스트 혹은 단독 접속 환경 자동 감지
+    local allPlayers = Players:GetPlayers()
+    if #allPlayers == 1 then
+        return allPlayers[1]
+    end
+
     return nil
 end
 
@@ -233,18 +251,85 @@ local function findBusModelForSeat(seatPart)
     return nil, nil
 end
 
+-- 버스 바닥에 서서 이동 중인지 확인 (Raycast)
+local function checkStandingOnBus(character)
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil, nil end
+
+    local rayOrigin = hrp.Position
+    local rayDirection = Vector3.new(0, -6, 0)
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterDescendantsInstances = { character }
+    raycastParams.FilterType = RaycastFilterType.Exclude
+
+    local result = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+    if result and result.Instance then
+        for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
+            local model = getVehicleModel(tagged)
+            if model and result.Instance:IsDescendantOf(model) then
+                return model, tagged
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+-- 버스 내부 탑승 공간에 있는지 확인 (Bounding Box)
+local function checkInsideBusBounds(character)
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil, nil end
+    local playerPos = hrp.Position
+
+    for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
+        local model = getVehicleModel(tagged)
+        if model then
+            local cframe, size = model:GetBoundingBox()
+            local localPos = cframe:PointToObjectSpace(playerPos)
+            if math.abs(localPos.X) <= (size.X / 2 + 0.3)
+               and math.abs(localPos.Y) <= (size.Y / 2 + 1.2)
+               and math.abs(localPos.Z) <= (size.Z / 2 + 0.3) then
+                return model, tagged
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+-- 플레이어의 버스 탑승 여부 판정 (좌석 착석, 바닥 서있기, 차량 내부 공간 모두 판정)
+local function findBusForCharacter(character)
+    if not character then return nil, nil end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+    -- 1. 좌석 탑승(Seat / VehicleSeat) 확인
+    local seatPart = humanoid and humanoid.SeatPart
+    if seatPart then
+        local model, tagged = findBusModelForSeat(seatPart)
+        if model then return model, tagged end
+    end
+
+    -- 2. 버스 바닥에 서 있는 경우 확인
+    local model, tagged = checkStandingOnBus(character)
+    if model then return model, tagged end
+
+    -- 3. 버스 내부 영역에 위치한 경우 확인
+    model, tagged = checkInsideBusBounds(character)
+    if model then return model, tagged end
+
+    return nil, nil
+end
+
 -- 선택한 플레이어가 탄 BUS의 상태를 하차벨 브리지에 전달합니다.
+-- 탑승 중이 아닐 때는 active = false를 전송하여 하차벨을 즉시 소등 및 초기화합니다.
 local function collectBellContext()
     local player = findTargetPlayer()
     local character = player and player.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    local seatPart = humanoid and humanoid.SeatPart
-
-    if not seatPart then
+    if not character then
         return { active = false, timestamp = DateTime.now().UnixTimestampMillis }
     end
 
-    local model, tagged = findBusModelForSeat(seatPart)
+    local model, tagged = findBusForCharacter(character)
     if not model then
         return { active = false, timestamp = DateTime.now().UnixTimestampMillis }
     end

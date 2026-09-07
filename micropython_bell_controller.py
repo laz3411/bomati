@@ -108,12 +108,43 @@ def sound_controller_thread():
         time.sleep_ms(10)
 
 
+try:
+    import uselect
+    spoll = uselect.poll()
+    spoll.register(sys.stdin, uselect.POLLIN)
+    def check_stdin():
+        return bool(spoll.poll(0))
+except Exception:
+    import select
+    def check_stdin():
+        try:
+            return bool(select.select([sys.stdin], [], [], 0)[0])
+        except Exception:
+            return False
+
+
 def force_reset_all():
-    global led_a_on, led_b_on, sig_a, sig_b, relay, stop_all_sound
+    global led_a_on, led_b_on, sig_a, sig_b, relay, stop_all_sound, play_a_sound, play_b_sound
+    # 1. 부저 및 사운드 즉각 정지
     stop_all_sound = True
-    relay = Pin(PIN_RELAY_IN, Pin.IN)
-    sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
+    play_a_sound = False
+    play_b_sound = False
+    buzzer_a.duty_u16(0)
+    buzzer_b.duty_u16(0)
+
+    # 2. 모든 조명 및 릴레이 소등 (불 끄기)
+    # Active-LOW 릴레이: 1(HIGH) 출력으로 전원 차단 후 입력 풀업으로 안전 복귀
+    relay = Pin(PIN_RELAY_IN, Pin.OUT, value=1)
+    relay = Pin(PIN_RELAY_IN, Pin.IN, Pin.PULL_UP)
+
+    # B벨 LED 소등: 1(HIGH) 출력 후 입력 PULL_UP 상태로 전환
+    sig_b = Pin(PIN_BELL_B, Pin.OUT, value=1)
     sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
+
+    # A벨 버튼 신호선 풀다운 복귀
+    sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
+
+    # 3. 내부 상태 플래그 초기화
     led_a_on = False
     led_b_on = False
     print("BELL_STATUS reset")
@@ -121,12 +152,17 @@ def force_reset_all():
 
 def set_mode(next_mode):
     global mode
+    next_mode = next_mode.lower()
     if next_mode not in ("low", "high", "idle"):
         return
-    if mode != next_mode:
+    if next_mode == "idle":
+        mode = "idle"
+        force_reset_all()
+        print("BELL_STATUS mode=idle (standby)")
+    else:
         force_reset_all()
         mode = next_mode
-        print("BELL_STATUS mode=" + mode)
+        print("BELL_STATUS mode=" + mode + " (boarded)")
 
 
 def handle_command(command):
@@ -137,43 +173,44 @@ def handle_command(command):
         set_mode("high")
     elif command == "MODE IDLE" or command == "RESET":
         set_mode("idle")
-        force_reset_all()
 
 
 def poll_serial_command():
     global serial_buffer
-    if not select.select([sys.stdin], [], [], 0)[0]:
-        return
-
-    char = sys.stdin.read(1)
-    if char == " ":
-        force_reset_all()
-    elif char in "\r\n":
-        if serial_buffer:
-            handle_command(serial_buffer)
-            serial_buffer = ""
-    elif char:
-        serial_buffer += char
-        if len(serial_buffer) > 32:
-            serial_buffer = ""
+    while check_stdin():
+        char = sys.stdin.read(1)
+        if not char:
+            break
+        if char == " ":
+            force_reset_all()
+        elif char in "\r\n":
+            if serial_buffer:
+                handle_command(serial_buffer)
+                serial_buffer = ""
+        elif char:
+            serial_buffer += char
+            if len(serial_buffer) > 64:
+                serial_buffer = ""
 
 
 _thread.start_new_thread(sound_controller_thread, ())
+force_reset_all()
 print("BELL_STATUS ready")
 
 while True:
     poll_serial_command()
 
-    # 버스에 탄 상태가 아닐 때에는 신호를 무시합니다.
+    # 버스에 탑승한 상태(low 또는 high)가 아니면 하차벨 기능을 완전히 비활성화 (대기)
     if mode == "idle":
         time.sleep_ms(10)
         continue
 
+    # 탑승 중일 때만 하차벨 버튼 입력 감지 및 점등/부저 동작
     if not led_b_on:
         sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
         if sig_b.value() == 0:
             time.sleep_ms(30)
-            if sig_b.value() == 0:
+            if sig_b.value() == 0 and mode != "idle":
                 led_b_on = True
                 sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
                 if mode == "low":
@@ -186,7 +223,7 @@ while True:
 
     if not led_a_on and sig_a.value() == 1:
         time.sleep_ms(50)
-        if sig_a.value() == 1:
+        if sig_a.value() == 1 and mode != "idle":
             relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
             led_a_on = True
             play_a_sound = True
@@ -195,7 +232,7 @@ while True:
                 sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
             send_event("A")
 
-    if led_b_on:
+    if led_b_on and mode != "idle":
         sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
 
     time.sleep_ms(10)
