@@ -17,6 +17,7 @@ import serial
 
 
 DEFAULT_FIREBASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app"
+MAX_CONTEXT_AGE_MS = 3_000
 
 
 def firebase_request(url, method, payload=None):
@@ -33,7 +34,12 @@ def firebase_request(url, method, payload=None):
 
 
 def read_bell_context(firebase_url):
-    return firebase_request(f"{firebase_url}/radar/bell.json", "GET") or {"active": False}
+    context = firebase_request(f"{firebase_url}/radar/bell.json", "GET") or {"active": False}
+    timestamp = context.get("timestamp")
+    is_fresh = isinstance(timestamp, (int, float)) and int(time.time() * 1000) - timestamp <= MAX_CONTEXT_AGE_MS
+    if context.get("active") is not True or not is_fresh:
+        return {"active": False}
+    return context
 
 
 def send_mode(device, context):
@@ -116,6 +122,10 @@ def run(port, baud, firebase_url, poll_interval):
                         last_context_key = next_key
                 except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
                     print(f"[Firebase] 하차벨 상태 읽기 실패: {error}", file=sys.stderr)
+                    current_context = {"active": False}
+                    if last_context_key != (False,):
+                        send_mode(device, current_context)
+                        last_context_key = (False,)
                 next_poll = now + poll_interval
 
             raw_line = device.readline()
