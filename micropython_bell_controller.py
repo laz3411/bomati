@@ -111,6 +111,7 @@ def sound_controller_thread():
 def force_reset_all():
     global led_a_on, led_b_on, sig_a, sig_b, relay, stop_all_sound
     stop_all_sound = True
+    relay = Pin(PIN_RELAY_IN, Pin.OUT, value=1)
     relay = Pin(PIN_RELAY_IN, Pin.IN)
     sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
     sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
@@ -164,11 +165,14 @@ print("BELL_STATUS ready")
 while True:
     poll_serial_command()
 
-    # 버스에 탄 상태가 아닐 때에는 신호를 무시합니다.
+    # 버스에 탄 상태가 아닐 때(mode == "idle")에는 모든 하차벨 입력을 무시하고 불이 꺼진 상태를 유지합니다.
     if mode == "idle":
         time.sleep_ms(10)
         continue
 
+    # [하차벨 B (교통약자/휠체어 하차벨)]
+    # - 저상버스(mode == "low"): B벨 독립 작동 (부저 B + LED B 점등)
+    # - 고상버스(mode == "high"): B벨이 A벨과 함께 작동 (부저 A + 릴레이 ON + LED A/B 동시 점등)
     if not led_b_on:
         sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
         if sig_b.value() == 0:
@@ -176,26 +180,38 @@ while True:
             if sig_b.value() == 0:
                 led_b_on = True
                 sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
+
                 if mode == "low":
                     play_b_sound = True
-                else:
+                elif mode == "high":
                     relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
                     led_a_on = True
                     play_a_sound = True
+
                 send_event("B")
 
-    if not led_a_on and sig_a.value() == 1:
-        time.sleep_ms(50)
+    # [하차벨 A (일반 하차벨)]
+    # - 저상버스(mode == "low"): A벨 독립 작동 (부저 A + 릴레이 ON + LED A 점등)
+    # - 고상버스(mode == "high"): A벨 작동 시 B벨도 함께 점등 (LED A/B 동시 점등)
+    if not led_a_on:
+        sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
         if sig_a.value() == 1:
-            relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
-            led_a_on = True
-            play_a_sound = True
-            if mode == "high":
-                led_b_on = True
-                sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
-            send_event("A")
+            time.sleep_ms(50)
+            if sig_a.value() == 1:
+                relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
+                led_a_on = True
+                play_a_sound = True
 
+                if mode == "high":
+                    led_b_on = True
+                    sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
+
+                send_event("A")
+
+    # B벨 LED 유지
     if led_b_on:
         sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
 
     time.sleep_ms(10)
+
+

@@ -118,6 +118,230 @@
     }
 
     .toast.show { opacity: 1; }
+
+    /* 하차 예약 바텀 시트 (모바일 최적화) */
+    .reservation-sheet {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      max-height: 70%;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-top: 1.5px solid rgba(255, 255, 255, 0.15);
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      transform: translateY(100%);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+      padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .reservation-sheet.active {
+      transform: translateY(0);
+    }
+
+    .sheet-header {
+      padding: 14px 18px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .sheet-title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bus-route-badge {
+      font-size: 15px;
+      font-weight: 800;
+      color: #fff;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: #0284c7;
+    }
+
+    .bus-floor-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 12px;
+      color: #fff;
+    }
+    .badge-low { background: #16a34a; }
+    .badge-high { background: #ea580c; }
+
+    .bell-status-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: #e11d48;
+      color: #fff;
+      animation: pulseBell 1s infinite;
+    }
+    @keyframes pulseBell {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.7; transform: scale(1.05); }
+    }
+
+    .btn-close-sheet {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+
+    .sheet-body {
+      padding: 12px 18px;
+      overflow-y: auto;
+      flex: 1;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .current-stop-info {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-bottom: 10px;
+    }
+    .current-stop-name {
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+    .stop-list-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-bottom: 8px;
+    }
+
+    .stop-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      margin-bottom: 7px;
+      background: rgba(30, 41, 59, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      transition: background 0.2s;
+    }
+    .stop-item.reserved {
+      background: rgba(2, 132, 199, 0.2);
+      border-color: #38bdf8;
+    }
+
+    .stop-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .stop-index-circle {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.12);
+      color: #cbd5e1;
+      font-size: 11px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .stop-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f1f5f9;
+    }
+
+    .stop-dist {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+
+    .btn-reserve {
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: none;
+      background: #0284c7;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-reserve:active { transform: scale(0.95); }
+
+    .btn-reserved {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+      color: #38bdf8;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    /* 근처 버스 알림 플로팅 버튼 */
+    .nearby-bus-pill {
+      position: absolute;
+      top: calc(16px + env(safe-area-inset-top, 0px));
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1.5px solid rgba(56, 189, 248, 0.4);
+      border-radius: 24px;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      z-index: 25;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.4);
+      transition: all 0.25s;
+    }
+
+    /* 하차벨 자동 알림 팝업 배너 */
+    .bell-alert-banner {
+      position: absolute;
+      top: calc(16px + env(safe-area-inset-top, 0px));
+      left: 50%;
+      transform: translateX(-50%) translateY(-150%);
+      background: linear-gradient(135deg, #e11d48, #be123c);
+      border: 1.5px solid #fda4af;
+      border-radius: 14px;
+      padding: 12px 20px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      text-align: center;
+      z-index: 50;
+      box-shadow: 0 8px 25px rgba(225, 29, 72, 0.5);
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      white-space: pre-line;
+      pointer-events: none;
+    }
+    .bell-alert-banner.show {
+      transform: translateX(-50%) translateY(0);
+    }
   </style>
 
   <!-- 웹뷰(APK) 및 file:// 호환 Firebase SDK -->
@@ -127,6 +351,12 @@
 <body>
   <div id="viewport">
     <canvas id="mapCanvas"></canvas>
+
+    <!-- 근처 버스 알림 플로팅 버튼 -->
+    <div id="nearbyBusPill" class="nearby-bus-pill" style="display: none;"></div>
+
+    <!-- 하차벨 자동 알림 배너 -->
+    <div id="bellAlertBanner" class="bell-alert-banner"></div>
 
     <!-- 우측 하단 컨트롤 -->
     <div class="controls-fab">
@@ -140,6 +370,25 @@
           <circle cx="12" cy="12" r="2.5"/>
         </svg>
       </button>
+    </div>
+
+    <!-- 하차 예약 바텀 시트 -->
+    <div id="reservationSheet" class="reservation-sheet">
+      <div class="sheet-header">
+        <div class="sheet-title-group">
+          <span id="sheetRouteBadge" class="bus-route-badge">BUS</span>
+          <span id="sheetFloorBadge" class="bus-floor-badge badge-low">저상</span>
+          <span id="sheetBellBadge" class="bell-status-badge" style="display: none;">🔔 하차벨 울림</span>
+        </div>
+        <button class="btn-close-sheet" onclick="closeReservationSheet()">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div class="current-stop-info">
+          현재 위치: <span id="sheetCurrentStop" class="current-stop-name">운행 중</span>
+        </div>
+        <div class="stop-list-title">다음 하차 가능 정류장 (남은 정류장 목록)</div>
+        <div id="sheetStopList"></div>
+      </div>
     </div>
 
     <!-- 자유 이동 모드 토스트 -->
@@ -270,6 +519,10 @@
           targetX: Number(rawBus.x),
           targetZ: Number(rawBus.z),
           targetAngle: nextAngle,
+          currentStop: rawBus.currentStop || null,
+          upcomingStops: rawBus.upcomingStops || [],
+          allStops: rawBus.allStops || [],
+          isBellRinging: rawBus.isBellRinging === true,
           lastSeen: Date.now()
         });
         return;
@@ -281,7 +534,15 @@
       existing.targetX = Number(rawBus.x);
       existing.targetZ = Number(rawBus.z);
       existing.targetAngle = nextAngle;
+      existing.currentStop = rawBus.currentStop || existing.currentStop;
+      existing.upcomingStops = rawBus.upcomingStops || existing.upcomingStops;
+      existing.allStops = rawBus.allStops || existing.allStops;
+      existing.isBellRinging = rawBus.isBellRinging === true;
       existing.lastSeen = Date.now();
+
+      if (selectedBusId === id) {
+        renderReservationSheet();
+      }
     }
 
     function replaceBuses(rawBuses) {
@@ -354,6 +615,7 @@
         // 지도 렌더링
         ctx.drawImage(mapImg, 0, 0);
 
+        drawStopMarkers(ctx);
         drawBusMarkers(ctx);
 
         // GPS 마커 렌더링
@@ -367,6 +629,7 @@
 
         ctx.drawImage(mapImg, 0, 0);
 
+        drawStopMarkers(ctx);
         drawBusMarkers(ctx);
 
         if (targetPlayer) {
@@ -375,6 +638,65 @@
         }
 
         ctx.restore();
+      }
+
+      updateNearbyBusNotification();
+    }
+
+    function drawStopMarkers(ctx) {
+      const renderedStopKeys = new Set();
+
+      for (const bus of buses.values()) {
+        const stopsToDraw = (bus.allStops && bus.allStops.length > 0) ? bus.allStops : (bus.upcomingStops || []);
+        const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+        const res = currentReservations[busKey];
+
+        stopsToDraw.forEach((stop) => {
+          const key = `${stop.x},${stop.z}`;
+          if (renderedStopKeys.has(key)) return;
+          renderedStopKeys.add(key);
+
+          const { x: px, y: py } = worldToMap(stop.x, stop.z);
+          const isReserved = res && Number(res.targetStopIndex) === Number(stop.index);
+
+          ctx.save();
+          ctx.translate(px, py);
+
+          if (isReserved) {
+            // 예약된 정류장은 화려한 펄스 링 표시
+            const pulseR = 12 + Math.sin(pulse * 2) * 4;
+            ctx.beginPath();
+            ctx.arc(0, 0, pulseR / viewScale, 0, Math.PI * 2);
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 2.5 / viewScale;
+            ctx.stroke();
+
+            ctx.fillStyle = 'rgba(251, 191, 36, 0.25)';
+            ctx.fill();
+          }
+
+          // 기본 정류장 핀
+          ctx.beginPath();
+          ctx.arc(0, 0, 4.5 / viewScale, 0, Math.PI * 2);
+          ctx.fillStyle = isReserved ? '#fbbf24' : '#0284c7';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.2 / viewScale;
+          ctx.fill();
+          ctx.stroke();
+
+          // 정류장 번호 또는 이름 라벨
+          ctx.font = `bold ${Math.max(7 / viewScale, 4.2)}px -apple-system, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.lineWidth = 2.2 / viewScale;
+          ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
+          ctx.fillStyle = isReserved ? '#fef08a' : '#f8fafc';
+          const label = isReserved ? `🔔 ${stop.name || stop.index}` : String(stop.name || stop.index);
+          ctx.strokeText(label, 0, -6 / viewScale);
+          ctx.fillText(label, 0, -6 / viewScale);
+
+          ctx.restore();
+        });
       }
     }
 
@@ -391,10 +713,19 @@
       const routeText = String(bus.route || bus.name || 'BUS').slice(0, 8);
       const floorText = bus.isHighFloor ? '고상' : '저상';
       const fill = bus.isHighFloor ? '#f97316' : '#16a34a';
+      const isSelected = bus.id === selectedBusId;
 
       ctx.save();
       ctx.translate(px, py);
       ctx.rotate(CONFIG.invertArrowX ? -angle : angle);
+
+      // 선택된 버스일 경우 외곽 하이라이트 링
+      if (isSelected) {
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2.2 / viewScale;
+        roundRect(ctx, -width / 2 - 3, -height / 2 - 3, width + 6, height + 6, 4);
+        ctx.stroke();
+      }
 
       // 진행 방향을 길쭉한 차체와 앞쪽 흰 선으로 표현합니다.
       ctx.fillStyle = 'rgba(15, 23, 42, 0.42)';
@@ -440,6 +771,13 @@
       ctx.fillStyle = '#ffffff';
       ctx.strokeText(floorText, px, py + 12 / viewScale);
       ctx.fillText(floorText, px, py + 12 / viewScale);
+
+      // 하차벨 작동 중일 때 머리 위에 깜빡이는 🔔 표시
+      if (bus.isBellRinging) {
+        ctx.font = `${Math.max(12 / viewScale, 7)}px -apple-system, sans-serif`;
+        ctx.fillText('🔔', px, py - 24 / viewScale);
+      }
+
       ctx.restore();
     }
 
@@ -599,13 +937,61 @@
     // 드래그 & 터치 이동
     let isDrag = false;
     let dragSX = 0, dragSY = 0;
+    let dragStartX = 0, dragStartY = 0;
     let pinchStartDist = 0;
     let pinchStartScale = 1;
     let activeTouches = new Map();
 
+    function screenToMap(sx, sy) {
+      if (isLocked && targetPlayer) {
+        const { x: px, y: py } = worldToMap(targetPlayer.curX, targetPlayer.curZ);
+        const centerScreenY = vH * 0.58;
+        const dx = sx - vW / 2;
+        const dy = sy - centerScreenY;
+        const cos = Math.cos(viewRotation);
+        const sin = Math.sin(viewRotation);
+        const rx = (dx * cos - dy * sin) / viewScale;
+        const ry = (dx * sin + dy * cos) / viewScale;
+        return { x: px + rx, y: py + ry };
+      } else {
+        return { x: (sx - viewX) / viewScale, y: (sy - viewY) / viewScale };
+      }
+    }
+
+    function updateNearbyBusNotification() {
+      const pill = document.getElementById('nearbyBusPill');
+      if (!pill) return;
+
+      if (!targetPlayer || buses.size === 0) {
+        pill.style.display = 'none';
+        return;
+      }
+
+      let nearestBus = null;
+      let minDistance = 250; // 약 250 studs 이내 버스 접근 감지
+
+      for (const bus of buses.values()) {
+        const d = Math.hypot(targetPlayer.curX - bus.curX, targetPlayer.curZ - bus.curZ);
+        if (d < minDistance) {
+          minDistance = d;
+          nearestBus = bus;
+        }
+      }
+
+      if (nearestBus) {
+        pill.style.display = 'flex';
+        pill.innerHTML = `<span>🚌 <b>${nearestBus.route || nearestBus.name || 'BUS'}</b> 버스 접근 중 (${Math.round(minDistance)}m) · <b>하차 예약</b></span>`;
+        pill.onclick = () => openReservationSheet(nearestBus.id);
+      } else {
+        pill.style.display = 'none';
+      }
+    }
+
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
       isDrag = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
       unlockToFreeMove();
       dragSX = e.clientX - viewX;
       dragSY = e.clientY - viewY;
@@ -617,8 +1003,29 @@
       viewY = e.clientY - dragSY;
     });
 
-    canvas.addEventListener('pointerup', () => {
+    canvas.addEventListener('pointerup', (e) => {
+      const movedDist = Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY);
       isDrag = false;
+
+      // 단순 탭(클릭)인 경우 버스 마커 선택 검사
+      if (movedDist < 7) {
+        const mapClick = screenToMap(e.clientX, e.clientY);
+        let clickedBus = null;
+        let minBusDist = 28 / viewScale;
+
+        for (const bus of buses.values()) {
+          const bMap = worldToMap(bus.curX, bus.curZ);
+          const d = Math.hypot(mapClick.x - bMap.x, mapClick.y - bMap.y);
+          if (d < minBusDist) {
+            minBusDist = d;
+            clickedBus = bus;
+          }
+        }
+
+        if (clickedBus) {
+          openReservationSheet(clickedBus.id);
+        }
+      }
     });
 
     // 모바일 멀티터치 핀치 줌
@@ -673,6 +1080,173 @@
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
       viewScale = Math.max(viewScale * 0.75, 0.2);
     });
+
+    // ==========================================
+    // 9. 하차 예약 및 자동 하차벨 웹 연동
+    // ==========================================
+    let selectedBusId = null;
+    let currentReservations = {};
+    let bellAlertTimer = null;
+
+    try {
+      db.ref('radar/reservations').on('value', (snap) => {
+        currentReservations = snap.val() || {};
+        renderReservationSheet();
+        checkTriggeredReservations();
+      });
+    } catch (e) {}
+
+    function openReservationSheet(busId) {
+      selectedBusId = busId;
+      const sheet = document.getElementById('reservationSheet');
+      if (sheet) sheet.classList.add('active');
+      renderReservationSheet();
+    }
+
+    function closeReservationSheet() {
+      selectedBusId = null;
+      const sheet = document.getElementById('reservationSheet');
+      if (sheet) sheet.classList.remove('active');
+    }
+
+    function renderReservationSheet() {
+      if (!selectedBusId) return;
+      const bus = buses.get(selectedBusId);
+      if (!bus) {
+        closeReservationSheet();
+        return;
+      }
+
+      const routeBadge = document.getElementById('sheetRouteBadge');
+      const floorBadge = document.getElementById('sheetFloorBadge');
+      const bellBadge = document.getElementById('sheetBellBadge');
+      const currentStopEl = document.getElementById('sheetCurrentStop');
+      const stopListEl = document.getElementById('sheetStopList');
+
+      if (routeBadge) routeBadge.textContent = bus.route || bus.name || 'BUS';
+      if (floorBadge) {
+        floorBadge.textContent = bus.isHighFloor ? '고상' : '저상';
+        floorBadge.className = 'bus-floor-badge ' + (bus.isHighFloor ? 'badge-high' : 'badge-low');
+      }
+      if (bellBadge) {
+        bellBadge.style.display = bus.isBellRinging ? 'inline-block' : 'none';
+      }
+      if (currentStopEl) {
+        currentStopEl.textContent = bus.currentStop ? `${bus.currentStop.name} (정류장 접근/정차 중)` : '운행 중 (다음 정류장 이동)';
+      }
+
+      const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      const currentRes = currentReservations[busKey];
+
+      if (!stopListEl) return;
+      stopListEl.innerHTML = '';
+
+      const upcoming = bus.upcomingStops || [];
+      if (upcoming.length === 0) {
+        stopListEl.innerHTML = '<div style="color: #94a3b8; font-size: 13px; padding: 18px 0; text-align: center;">남은 정류장이 없습니다 (종점 도착 또는 노선 종료)</div>';
+        return;
+      }
+
+      upcoming.forEach((stop) => {
+        const isThisReserved = currentRes && Number(currentRes.targetStopIndex) === Number(stop.index);
+        const item = document.createElement('div');
+        item.className = 'stop-item' + (isThisReserved ? ' reserved' : '');
+
+        item.innerHTML = `
+          <div class="stop-left">
+            <div class="stop-index-circle">${stop.index}</div>
+            <div>
+              <div class="stop-name">${stop.name || ('정류장 ' + stop.index)}</div>
+              <div class="stop-dist">${stop.distance ? Math.round(stop.distance) + 'm 남음' : ''}</div>
+            </div>
+          </div>
+          <div>
+            ${isThisReserved
+              ? `<button class="btn-reserved" onclick="cancelReservation('${bus.id}')">🔔 예약됨 (취소)</button>`
+              : `<button class="btn-reserve" onclick="reserveStop('${bus.id}', ${stop.index}, '${(stop.name || ('정류장 ' + stop.index)).replace(/'/g, "\\'")}')">하차 예약</button>`
+            }
+          </div>
+        `;
+        stopListEl.appendChild(item);
+      });
+    }
+
+    function reserveStop(busId, stopIndex, stopName) {
+      const bus = buses.get(busId);
+      if (!bus) return;
+      const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      db.ref('radar/reservations/' + busKey).set({
+        busId: bus.id,
+        route: bus.route,
+        targetStopIndex: stopIndex,
+        targetStopName: stopName,
+        status: 'pending',
+        reservedAt: Date.now()
+      });
+      showToast(`🔔 ${stopName} 하차 예약이 완료되었습니다!`);
+      renderReservationSheet();
+    }
+
+    function cancelReservation(busId) {
+      const busKey = busId.replace(/[.#$/[\]]/g, '_');
+      db.ref('radar/reservations/' + busKey).remove();
+      showToast('하차 예약을 취소했습니다.');
+      renderReservationSheet();
+    }
+
+    function playWebBellChime() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const now = audioCtx.currentTime;
+
+        // G5 (784Hz)
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(784, now);
+        gain1.gain.setValueAtTime(0.3, now);
+        gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.45);
+
+        // E5 (659Hz)
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(659, now + 0.35);
+        gain2.gain.setValueAtTime(0.3, now + 0.35);
+        gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.9);
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        osc2.start(now + 0.35);
+        osc2.stop(now + 0.9);
+      } catch (e) {}
+    }
+
+    function showBellAlert(msg) {
+      const banner = document.getElementById('bellAlertBanner');
+      if (!banner) return;
+      banner.textContent = msg;
+      banner.classList.add('show');
+      clearTimeout(bellAlertTimer);
+      bellAlertTimer = setTimeout(() => {
+        banner.classList.remove('show');
+      }, 4500);
+    }
+
+    const notifiedReservationKeys = new Set();
+    function checkTriggeredReservations() {
+      for (const [key, res] of Object.entries(currentReservations)) {
+        if (res && res.status === 'triggered' && !notifiedReservationKeys.has(key)) {
+          notifiedReservationKeys.add(key);
+          playWebBellChime();
+          if (navigator.vibrate) navigator.vibrate([250, 150, 250]);
+          showBellAlert(`🔔 하차벨 자동 작동!\n이번 정류장 [${res.targetStopName || '예약 정류장'}]에서 하차하세요.`);
+        }
+      }
+    }
   </script>
 </body>
 </html>
