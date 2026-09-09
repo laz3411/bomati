@@ -691,10 +691,16 @@
       pulse += 0.05;
 
       if (targetPlayer) {
-        // 부드러운 위치/각도 보간 (Lerp)
-        targetPlayer.curX += (targetPlayer.targetX - targetPlayer.curX) * 0.22;
-        targetPlayer.curZ += (targetPlayer.targetZ - targetPlayer.curZ) * 0.22;
-        targetPlayer.curAngle = lerpAngle(targetPlayer.curAngle, targetPlayer.targetAngle, 0.22);
+        // 10초 이상 데이터가 안 들어오면 유령 마커 제거 및 대기 상태 전환
+        if (targetPlayer.lastSeen && (Date.now() - targetPlayer.lastSeen > 10000)) {
+          targetPlayer = null;
+          if (typeof updateStatusHud === 'function') updateStatusHud();
+        } else {
+          // 부드러운 위치/각도 보간 (Lerp)
+          targetPlayer.curX += (targetPlayer.targetX - targetPlayer.curX) * 0.22;
+          targetPlayer.curZ += (targetPlayer.targetZ - targetPlayer.curZ) * 0.22;
+          targetPlayer.curAngle = lerpAngle(targetPlayer.curAngle, targetPlayer.targetAngle, 0.22);
+        }
       }
 
       for (const bus of buses.values()) {
@@ -1078,7 +1084,8 @@
               id: found.id,
               name: found.name,
               curX: x, curZ: z, curAngle: angle,
-              targetX: x, targetZ: z, targetAngle: angle
+              targetX: x, targetZ: z, targetAngle: angle,
+              lastSeen: Date.now()
             };
           } else {
             targetPlayer.id = found.id;
@@ -1086,6 +1093,7 @@
             targetPlayer.targetX = x;
             targetPlayer.targetZ = z;
             targetPlayer.targetAngle = angle;
+            targetPlayer.lastSeen = Date.now();
           }
 
           // 처음 위치가 인식된 순간: 플레이어 위치로 카메라 자동 고정 및 알림

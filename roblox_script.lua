@@ -527,6 +527,8 @@ local function getBusPose(model, taggedInstance)
     return position, math.atan2(lookVector.X, lookVector.Z), frontPart and frontPart.Name or nil, backPart and backPart.Name or nil, positionPartName
 end
 
+local lastLogTime = 0
+
 local function collectPlayersData()
     local playersData = {}
     local allPlayers = Players:GetPlayers()
@@ -534,46 +536,70 @@ local function collectPlayersData()
         return playersData
     end
 
-    -- 1. TARGET_ROBLOX_USER_NAME과 일치하는 플레이어가 있는지 확인
-    local hasTarget = false
-    if TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
-        for _, player in ipairs(allPlayers) do
-            if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
-                hasTarget = true
-                break
+    local now = os.clock()
+    local shouldLog = (now - lastLogTime >= 3.0)
+
+    for _, player in ipairs(allPlayers) do
+        -- laz3411 계정 우선 매칭 (플레이어가 1명이면 무조건 매칭)
+        local isTarget = (#allPlayers == 1)
+        if not isTarget and TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
+            local t = TARGET_ROBLOX_USER_NAME:lower()
+            if player.Name:lower() == t or player.DisplayName:lower() == t then
+                isTarget = true
+            end
+        elseif not TARGET_ROBLOX_USER_NAME or TARGET_ROBLOX_USER_NAME == "" then
+            isTarget = true
+        end
+
+        if isTarget then
+            local char = player.Character or workspace:FindFirstChild(player.Name)
+            if char then
+                local rootPart = char:FindFirstChild("HumanoidRootPart")
+                    or char:FindFirstChild("Torso")
+                    or char:FindFirstChild("UpperTorso")
+                    or char.PrimaryPart
+
+                local pos = nil
+                local lookVector = nil
+
+                if rootPart and rootPart:IsA("BasePart") then
+                    pos = rootPart.Position
+                    lookVector = rootPart.CFrame.LookVector
+                elseif char:IsA("Model") then
+                    local pivot = char:GetPivot()
+                    pos = pivot.Position
+                    lookVector = pivot.LookVector
+                end
+
+                if pos and lookVector then
+                    local angle = math.atan2(lookVector.X, lookVector.Z)
+                    local humanoid = char:FindFirstChildOfClass("Humanoid")
+                    local health = humanoid and humanoid.Health or 100
+                    local maxHealth = humanoid and humanoid.MaxHealth or 100
+
+                    table.insert(playersData, {
+                        id = player.UserId,
+                        name = player.Name,
+                        displayName = player.DisplayName,
+                        x = round1(pos.X),
+                        y = round1(pos.Y),
+                        z = round1(pos.Z),
+                        angle = angle,
+                        health = math.round(health),
+                        maxHealth = math.round(maxHealth),
+                        timestamp = DateTime.now().UnixTimestampMillis
+                    })
+
+                    if shouldLog then
+                        print(string.format("[레이더 GPS 전송중] 플레이어: %s (%s) -> X: %.1f, Z: %.1f", player.Name, player.DisplayName, pos.X, pos.Z))
+                    end
+                end
             end
         end
     end
 
-    -- 2. 매칭되는 플레이어가 있으면 해당 플레이어 우선 수집, 없으면 접속 중인 모든 플레이어 수집
-    for _, player in ipairs(allPlayers) do
-        local includeThis = (not hasTarget) or (player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower())
-        if includeThis then
-            local char = player.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local humanoid = char:FindFirstChild("Humanoid")
-                local pos = hrp.Position
-                local lookVector = hrp.CFrame.LookVector
-                local angle = math.atan2(lookVector.X, lookVector.Z)
-
-                local health = humanoid and humanoid.Health or 100
-                local maxHealth = humanoid and humanoid.MaxHealth or 100
-
-                table.insert(playersData, {
-                    id = player.UserId,
-                    name = player.Name,
-                    displayName = player.DisplayName,
-                    x = round1(pos.X),
-                    y = round1(pos.Y),
-                    z = round1(pos.Z),
-                    angle = angle,
-                    health = math.round(health),
-                    maxHealth = math.round(maxHealth),
-                    timestamp = DateTime.now().UnixTimestampMillis
-                })
-            end
-        end
+    if shouldLog then
+        lastLogTime = now
     end
 
     return playersData
@@ -709,7 +735,7 @@ local function isCharacterTouchingPart(character, part)
         return false
     end
 
-    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local hrp = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso") or character.PrimaryPart
     if not hrp then
         return false
     end
