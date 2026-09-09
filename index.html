@@ -45,6 +45,34 @@
       touch-action: none;
     }
 
+    /* Firebase 연결 상태를 숨기지 않고 화면에 표시해 문제를 바로 확인합니다. */
+    .firebase-status {
+      position: absolute;
+      top: calc(12px + env(safe-area-inset-top, 0px));
+      left: calc(12px + env(safe-area-inset-left, 0px));
+      z-index: 25;
+      max-width: calc(100vw - 24px);
+      padding: 7px 11px;
+      border: 1px solid rgba(250, 204, 21, 0.35);
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.86);
+      color: #fde68a;
+      font-size: 11px;
+      font-weight: 600;
+      pointer-events: none;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .firebase-status.ok {
+      color: #86efac;
+      border-color: rgba(34, 197, 94, 0.45);
+    }
+
+    .firebase-status.error {
+      color: #fca5a5;
+      border-color: rgba(239, 68, 68, 0.5);
+    }
+
     /* 우측 하단 플로팅 컨트롤 (모바일 Safe Area 반영) */
     .controls-fab {
       position: absolute;
@@ -351,6 +379,7 @@
 <body>
   <div id="viewport">
     <canvas id="mapCanvas"></canvas>
+    <div id="firebaseStatus" class="firebase-status">Firebase 연결 확인 중...</div>
 
     <!-- 근처 버스 알림 플로팅 버튼 -->
     <div id="nearbyBusPill" class="nearby-bus-pill" style="display: none;"></div>
@@ -861,10 +890,33 @@
     // 7. Firebase 실시간 데이터 수신
     // ==========================================
     let isInitialCameraFocused = false;
+    // Firebase 인스턴스는 아래 하차 예약 영역에서도 사용하므로
+    // try 블록 밖에 선언해야 합니다. (기존에는 블록 안 const라서
+    // 예약 코드에서 항상 ReferenceError가 발생했습니다.)
+    let db = null;
+    const firebaseStatus = document.getElementById('firebaseStatus');
+    const lockBtn = document.getElementById('lockBtn');
+    const toast = document.getElementById('toast');
+    let toastTimer = null;
+
+    function setFirebaseStatus(message, state) {
+      if (!firebaseStatus) return;
+      firebaseStatus.textContent = message;
+      firebaseStatus.className = 'firebase-status' + (state ? ` ${state}` : '');
+    }
 
     try {
       firebase.initializeApp({ databaseURL: FIREBASE_DB_URL });
-      const db = firebase.database();
+      db = firebase.database();
+      setFirebaseStatus('Firebase 연결 대기 중...', '');
+
+      db.ref('.info/connected').on('value', (snap) => {
+        if (snap.val() === true) {
+          setFirebaseStatus('Firebase 연결됨 · 위치 수신 대기 중', 'ok');
+        } else {
+          setFirebaseStatus('Firebase 재연결 중...', '');
+        }
+      });
 
       function normalizeList(value) {
         if (!value) return [];
@@ -933,33 +985,30 @@
           return;
         }
 
-        if (val.players !== undefined) {
-          updateTargetPlayer(val.players);
-        }
-        if (val.buses !== undefined) {
-          replaceBuses(normalizeList(val.buses));
-        }
-      });
-
-      // 2) 별도 /players 노드도 동시 구독 (다양한 스크립트/모의 전송 호환)
-      db.ref('players').on('value', (snap) => {
-        const playersVal = snap.val();
-        if (playersVal) {
-          updateTargetPlayer(playersVal);
-        }
+        // Roblox 스크립트가 PUT하는 단일 노드만 사용합니다.
+        // 오래된 /players 노드와 동시에 읽으면 낡은 좌표가 새 좌표를
+        // 덮어쓰는 경쟁 상태가 생길 수 있습니다.
+        updateTargetPlayer(val.players || []);
+        replaceBuses(normalizeList(val.buses));
+        setFirebaseStatus(
+          `Firebase 연결됨 · 플레이어 ${normalizeList(val.players).length}명 · 버스 ${normalizeList(val.buses).length}대`,
+          'ok'
+        );
+      }, (error) => {
+        console.error('[Firebase] /radar 읽기 실패:', error);
+        setFirebaseStatus('Firebase 읽기 실패 · 규칙/URL 확인 필요', 'error');
+        showToast('Firebase 읽기 실패: 데이터베이스 규칙과 URL을 확인하세요.');
       });
 
     } catch (e) {
       console.error("Firebase 초기화 에러:", e);
+      setFirebaseStatus('Firebase 초기화 실패 · SDK/인터넷 확인 필요', 'error');
+      showToast('Firebase 초기화 실패: 인터넷 연결과 SDK 로딩을 확인하세요.');
     }
 
     // ==========================================
     // 8. 모바일 터치 및 인터랙션 (잠금 / 자유 이동)
     // ==========================================
-    const lockBtn = document.getElementById('lockBtn');
-    const toast = document.getElementById('toast');
-    let toastTimer = null;
-
     function showToast(msg) {
       toast.textContent = msg;
       toast.classList.add('show');
@@ -1160,12 +1209,17 @@
     let bellAlertTimer = null;
 
     try {
+      if (!db) throw new Error('Firebase database is not initialized');
       db.ref('radar/reservations').on('value', (snap) => {
         currentReservations = snap.val() || {};
         renderReservationSheet();
         checkTriggeredReservations();
+      }, (error) => {
+        console.error('[Firebase] reservations 읽기 실패:', error);
       });
-    } catch (e) {}
+    } catch (e) {
+      console.error('[Firebase] reservations 초기화 실패:', e);
+    }
 
     function openReservationSheet(busId) {
       selectedBusId = busId;
@@ -1245,6 +1299,10 @@
     function reserveStop(busId, stopIndex, stopName) {
       const bus = buses.get(busId);
       if (!bus) return;
+      if (!db) {
+        showToast('Firebase 연결 전입니다. 잠시 후 다시 시도하세요.');
+        return;
+      }
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
       db.ref('radar/reservations/' + busKey).set({
         busId: bus.id,
@@ -1253,14 +1311,24 @@
         targetStopName: stopName,
         status: 'pending',
         reservedAt: Date.now()
+      }).catch((error) => {
+        console.error('[Firebase] 하차 예약 저장 실패:', error);
+        showToast('하차 예약 저장에 실패했습니다. Firebase 규칙을 확인하세요.');
       });
       showToast(`🔔 ${stopName} 하차 예약이 완료되었습니다!`);
       renderReservationSheet();
     }
 
     function cancelReservation(busId) {
+      if (!db) {
+        showToast('Firebase 연결 전입니다. 잠시 후 다시 시도하세요.');
+        return;
+      }
       const busKey = busId.replace(/[.#$/[\]]/g, '_');
-      db.ref('radar/reservations/' + busKey).remove();
+      db.ref('radar/reservations/' + busKey).remove().catch((error) => {
+        console.error('[Firebase] 하차 예약 취소 실패:', error);
+        showToast('하차 예약 취소에 실패했습니다. Firebase 규칙을 확인하세요.');
+      });
       showToast('하차 예약을 취소했습니다.');
       renderReservationSheet();
     }

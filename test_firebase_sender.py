@@ -37,13 +37,13 @@ print(" 웹 브라우저에서 index.html을 열어두고 움직임을 확인하
 print("=" * 60)
 
 angle1 = 0.0
-angle2 = math.PI
+angle2 = math.pi
 
 try:
     while True:
         x1 = CENTER_X + math.cos(angle1) * RADIUS_X
         z1 = CENTER_Z + math.sin(angle1) * RADIUS_Z
-        look1 = angle1 + math.PI / 2
+        look1 = angle1 + math.pi / 2
 
         x2 = CENTER_X + math.sin(angle2) * (RADIUS_X * 0.8)
         z2 = CENTER_Z + math.sin(angle2 * 2) * (RADIUS_Z * 0.5)

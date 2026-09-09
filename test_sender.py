@@ -21,14 +21,14 @@ print(f"가상 로블록스 클라이언트 시작! 대상: {SERVER_URL}")
 print("종료하려면 Ctrl+C를 누르세요.\n")
 
 angle1 = 0.0
-angle2 = math.PI
+angle2 = math.pi
 
 try:
     while True:
         # 플레이어 1: 원형 궤도
         x1 = CENTER_X + math.cos(angle1) * RADIUS_X
         z1 = CENTER_Z + math.sin(angle1) * RADIUS_Z
-        look1 = angle1 + math.PI / 2 # 접선 방향
+        look1 = angle1 + math.pi / 2 # 접선 방향
 
         # 플레이어 2: 8자 궤도
         x2 = CENTER_X + math.sin(angle2) * (RADIUS_X * 0.8)
