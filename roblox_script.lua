@@ -529,35 +529,50 @@ end
 
 local function collectPlayersData()
     local playersData = {}
+    local allPlayers = Players:GetPlayers()
+    if #allPlayers == 0 then
+        return playersData
+    end
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
+    -- 1. TARGET_ROBLOX_USER_NAME과 일치하는 플레이어가 있는지 확인
+    local hasTarget = false
+    if TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
+        for _, player in ipairs(allPlayers) do
+            if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
+                hasTarget = true
+                break
+            end
+        end
+    end
+
+    -- 2. 매칭되는 플레이어가 있으면 해당 플레이어 우선 수집, 없으면 접속 중인 모든 플레이어 수집
+    for _, player in ipairs(allPlayers) do
+        local includeThis = (not hasTarget) or (player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower())
+        if includeThis then
             local char = player.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then
-                continue
+            if hrp then
+                local humanoid = char:FindFirstChild("Humanoid")
+                local pos = hrp.Position
+                local lookVector = hrp.CFrame.LookVector
+                local angle = math.atan2(lookVector.X, lookVector.Z)
+
+                local health = humanoid and humanoid.Health or 100
+                local maxHealth = humanoid and humanoid.MaxHealth or 100
+
+                table.insert(playersData, {
+                    id = player.UserId,
+                    name = player.Name,
+                    displayName = player.DisplayName,
+                    x = round1(pos.X),
+                    y = round1(pos.Y),
+                    z = round1(pos.Z),
+                    angle = angle,
+                    health = math.round(health),
+                    maxHealth = math.round(maxHealth),
+                    timestamp = DateTime.now().UnixTimestampMillis
+                })
             end
-
-            local humanoid = char:FindFirstChild("Humanoid")
-            local pos = hrp.Position
-            local lookVector = hrp.CFrame.LookVector
-            local angle = math.atan2(lookVector.X, lookVector.Z)
-
-            local health = humanoid and humanoid.Health or 100
-            local maxHealth = humanoid and humanoid.MaxHealth or 100
-
-            table.insert(playersData, {
-                id = player.UserId,
-                name = player.Name,
-                displayName = player.DisplayName,
-                x = round1(pos.X),
-                y = round1(pos.Y),
-                z = round1(pos.Z),
-                angle = angle,
-                health = math.round(health),
-                maxHealth = math.round(maxHealth),
-                timestamp = DateTime.now().UnixTimestampMillis
-            })
         end
     end
 
@@ -672,13 +687,20 @@ local function collectBusData()
 end
 
 local function findTargetPlayer()
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
-            return player
+    local allPlayers = Players:GetPlayers()
+    if #allPlayers == 0 then
+        return nil
+    end
+
+    if TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
+        for _, player in ipairs(allPlayers) do
+            if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
+                return player
+            end
         end
     end
 
-    return nil
+    return allPlayers[1]
 end
 
 -- 플레이어가 특정 파트(캔콜/캔쿼리 OFF 파트 포함)에 닿아 있거나 내부 영역에 있는지 판정
