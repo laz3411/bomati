@@ -551,6 +551,24 @@ local function collectPlayersData()
             isTarget = true
         end
 
+        -- 테스트 서버에 다른 플레이어가 먼저 들어와도 전송이 멈추지 않도록
+        -- 설정한 이름을 찾지 못하면 첫 번째 플레이어를 예비 대상으로 사용합니다.
+        if not isTarget and #allPlayers > 1 then
+            local hasExactTarget = false
+            if TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
+                local targetName = TARGET_ROBLOX_USER_NAME:lower()
+                for _, candidate in ipairs(allPlayers) do
+                    if candidate.Name:lower() == targetName then
+                        hasExactTarget = true
+                        break
+                    end
+                end
+            end
+            if not hasExactTarget and player == allPlayers[1] then
+                isTarget = true
+            end
+        end
+
         if isTarget then
             local char = player.Character or workspace:FindFirstChild(player.Name)
             if char then
@@ -599,6 +617,12 @@ local function collectPlayersData()
     end
 
     if shouldLog then
+        if #playersData == 0 then
+            warn(string.format(
+                "[로블록스 레이더] 플레이어 %d명은 감지했지만 캐릭터 좌표를 얻지 못했습니다. Character/HumanoidRootPart 로딩을 확인하세요.",
+                #allPlayers
+            ))
+        end
         lastLogTime = now
     end
 
@@ -742,7 +766,9 @@ local function isCharacterTouchingPart(character, part)
 
     -- 1. 공간 쿼리 (CanQuery=false인 파트여도 대상 캐릭터 파트들은 CanQuery=true이므로 감지 가능)
     local overlapParams = OverlapParams.new()
-    overlapParams.FilterType = RaycastFilterType.Include
+    -- Roblox enum은 전역 RaycastFilterType이 아니라 Enum 아래에 있습니다.
+    -- 잘못된 이름이면 BUS 탑승 감지 순간 메인 Firebase 전송 루프가 죽습니다.
+    overlapParams.FilterType = Enum.RaycastFilterType.Include
     overlapParams.FilterDescendantsInstances = { character }
     local querySize = part.Size + Vector3.new(1.0, 2.0, 1.0)
     local foundParts = workspace:GetPartBoundsInBox(part.CFrame, querySize, overlapParams)
@@ -892,38 +918,45 @@ end
 task.spawn(function()
     while RunService:IsRunning() do
         if not isSending then
-            local playersData = collectPlayersData()
-            local busesData = collectBusData()
-            local radarData = {
-                players = playersData,
-                buses = busesData,
-                bell = collectBellContext(),
-                timestamp = DateTime.now().UnixTimestampMillis
-            }
+            -- 좌표/탑승 정보 수집 오류가 나도 전체 루프가 죽지 않도록 보호합니다.
+            local collectSuccess, playersData, busesData, bellData = pcall(function()
+                return collectPlayersData(), collectBusData(), collectBellContext()
+            end)
 
-            isSending = true
-            task.spawn(function()
-                local success, err = pcall(function()
-                    local radarResponse = HttpService:RequestAsync({
-                        Url = RADAR_ENDPOINT,
-                        Method = "PUT",
-                        Headers = { ["Content-Type"] = "application/json" },
-                        Body = HttpService:JSONEncode(radarData)
-                    })
+            if not collectSuccess then
+                warn("[로블록스 레이더] 데이터 수집 실패:", playersData)
+            else
+                local radarData = {
+                    players = playersData,
+                    buses = busesData,
+                    bell = bellData,
+                    timestamp = DateTime.now().UnixTimestampMillis
+                }
 
-                    if not radarResponse.Success then
-                        error(string.format("Firebase HTTP %s: %s", radarResponse.StatusCode, radarResponse.StatusMessage))
+                isSending = true
+                task.spawn(function()
+                    local success, err = pcall(function()
+                        local radarResponse = HttpService:RequestAsync({
+                            Url = RADAR_ENDPOINT,
+                            Method = "PUT",
+                            Headers = { ["Content-Type"] = "application/json" },
+                            Body = HttpService:JSONEncode(radarData)
+                        })
+
+                        if not radarResponse.Success then
+                            error(string.format("Firebase HTTP %s: %s", radarResponse.StatusCode, radarResponse.StatusMessage))
+                        end
+                    end)
+
+                    isSending = false
+
+                    if not success then
+                        warn("[로블록스 레이더] Firebase 전송 실패:", err)
+                        -- 실패 시 3초 대기 (로블록스 렉 방지)
+                        task.wait(3.0)
                     end
                 end)
-
-                isSending = false
-
-                if not success then
-                    warn("[로블록스 레이더] Firebase 전송 실패:", err)
-                    -- 실패 시 3초 대기 (로블록스 렉 방지)
-                    task.wait(3.0)
-                end
-            end)
+            end
         end
 
         task.wait(SEND_INTERVAL)
