@@ -15,8 +15,10 @@ PIN_BELL_B = 15
 PIN_RELAY_IN = 16
 PIN_BUZZER_A = 17
 PIN_BUZZER_B = 18
+RELAY_ON_LEVEL = 0   # 현재 배선은 active-low 릴레이 기준
+RELAY_OFF_LEVEL = 1
 
-relay = Pin(PIN_RELAY_IN, Pin.OUT, value=1)
+relay = Pin(PIN_RELAY_IN, Pin.OUT, value=RELAY_OFF_LEVEL)
 sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
 sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
 buzzer_a = PWM(Pin(PIN_BUZZER_A))
@@ -117,10 +119,12 @@ def sound_controller_thread():
 
 
 def force_reset_all():
-    global led_a_on, led_b_on, sig_a, sig_b, relay, stop_all_sound
+    global led_a_on, led_b_on, sig_a, sig_b, play_a_sound, play_b_sound, stop_all_sound
     stop_all_sound = True
+    play_a_sound = False
+    play_b_sound = False
     # 릴레이는 active-low 기준: HIGH가 꺼짐입니다.
-    relay = Pin(PIN_RELAY_IN, Pin.OUT, value=1)
+    relay.value(RELAY_OFF_LEVEL)
     sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
     sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
     led_a_on = False
@@ -139,12 +143,16 @@ def set_mode(next_mode):
 
 
 def trigger_remote_bell(button):
-    global led_a_on, led_b_on, sig_a, sig_b, relay, play_a_sound, play_b_sound
+    global led_a_on, led_b_on, sig_a, sig_b, relay, play_a_sound, play_b_sound, stop_all_sound
 
     button = button.upper()
     if mode == "idle":
         print("BELL_STATUS ignored=idle")
         return
+
+    # MODE 변경 직후 남아 있을 수 있는 reset 플래그가 새 벨 명령을
+    # 지우지 않도록 해제합니다.
+    stop_all_sound = False
 
     if button == "B":
         led_b_on = True
@@ -152,12 +160,12 @@ def trigger_remote_bell(button):
         if mode == "low":
             play_b_sound = True
         else:
-            relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
+            relay.value(RELAY_ON_LEVEL)
             led_a_on = True
             sig_a = Pin(PIN_BELL_A, Pin.OUT, value=0)
             play_a_sound = True
     else:
-        relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
+        relay.value(RELAY_ON_LEVEL)
         led_a_on = True
         sig_a = Pin(PIN_BELL_A, Pin.OUT, value=0)
         play_a_sound = True
@@ -170,6 +178,7 @@ def trigger_remote_bell(button):
 
 def handle_command(command):
     command = command.strip().upper()
+    print("BELL_STATUS command=" + command)
     if command == "MODE LOW":
         set_mode("low")
     elif command == "MODE HIGH":
@@ -224,9 +233,11 @@ while True:
                 sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
 
                 if mode == "low":
+                    stop_all_sound = False
                     play_b_sound = True
                 elif mode == "high":
-                    relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
+                    stop_all_sound = False
+                    relay.value(RELAY_ON_LEVEL)
                     led_a_on = True
                     play_a_sound = True
 
@@ -240,7 +251,8 @@ while True:
         if sig_a.value() == 1:
             time.sleep_ms(50)
             if sig_a.value() == 1:
-                relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
+                stop_all_sound = False
+                relay.value(RELAY_ON_LEVEL)
                 led_a_on = True
                 play_a_sound = True
 
