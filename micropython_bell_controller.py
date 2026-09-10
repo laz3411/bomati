@@ -37,10 +37,13 @@ stdin_poll.register(sys.stdin, select.POLLIN)
 
 def send_event(button):
     # Python 브리지가 이 한 줄을 읽어 Firebase에 저장합니다.
+    timestamp = time.ticks_ms()
     print("BELL_EVENT " + ujson.dumps({
         "button": button,
         "mode": mode,
-        "timestampMs": time.ticks_ms()
+        "source": "physical",
+        "eventId": "physical-{}-{}".format(timestamp, button),
+        "timestampMs": timestamp
     }))
 
 

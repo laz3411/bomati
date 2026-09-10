@@ -177,7 +177,7 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase)
     if not suppressFirebase then
         -- 4. 피지컬 하차벨 브리지 및 Firebase로 이벤트 전송
         task.spawn(function()
-            pcall(function()
+            local success, err = pcall(function()
                 local position = busModel.PrimaryPart and busModel.PrimaryPart.Position or busModel:GetPivot().Position
                 local timestamp = DateTime.now().UnixTimestampMillis
                 local isHighFloor = busModel:GetAttribute("isHighFloor") == true
@@ -203,19 +203,29 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase)
                         z = round1(position.Z),
                     }
                 }
-                HttpService:RequestAsync({
+                local latestResponse = HttpService:RequestAsync({
                     Url = FIREBASE_DATABASE_URL .. "/bell/latest.json",
                     Method = "PUT",
                     Headers = { ["Content-Type"] = "application/json" },
                     Body = HttpService:JSONEncode(payload)
                 })
-                HttpService:RequestAsync({
+                if not latestResponse.Success then
+                    error(string.format("Firebase bell/latest HTTP %s: %s", latestResponse.StatusCode, latestResponse.StatusMessage))
+                end
+
+                local eventsResponse = HttpService:RequestAsync({
                     Url = FIREBASE_DATABASE_URL .. "/bell/events.json",
                     Method = "POST",
                     Headers = { ["Content-Type"] = "application/json" },
                     Body = HttpService:JSONEncode(payload)
                 })
+                if not eventsResponse.Success then
+                    error(string.format("Firebase bell/events HTTP %s: %s", eventsResponse.StatusCode, eventsResponse.StatusMessage))
+                end
             end)
+            if not success then
+                warn("[로블록스 하차벨] Firebase 이벤트 전송 실패:", err)
+            end
         end)
     end
 end
