@@ -1,19 +1,22 @@
 from machine import Pin, PWM
 import _thread
-import select
+try:
+    import uselect as select
+except ImportError:
+    import select
 import sys
 import time
 import ujson
 
 # USB serial protocol from bell_firebase_bridge.py:
-#   MODE LOW\n, MODE HIGH\n, MODE IDLE\n, RESET\n
+#   MODE LOW\n, MODE HIGH\n, MODE IDLE\n, BELL A\n, BELL B\n, RESET\n
 PIN_BELL_A = 14
 PIN_BELL_B = 15
 PIN_RELAY_IN = 16
 PIN_BUZZER_A = 17
 PIN_BUZZER_B = 18
 
-relay = Pin(PIN_RELAY_IN, Pin.IN)
+relay = Pin(PIN_RELAY_IN, Pin.OUT, value=1)
 sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
 sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
 buzzer_a = PWM(Pin(PIN_BUZZER_A))
@@ -28,6 +31,8 @@ play_a_sound = False
 play_b_sound = False
 stop_all_sound = False
 serial_buffer = ""
+stdin_poll = select.poll()
+stdin_poll.register(sys.stdin, select.POLLIN)
 
 
 def send_event(button):
@@ -111,8 +116,8 @@ def sound_controller_thread():
 def force_reset_all():
     global led_a_on, led_b_on, sig_a, sig_b, relay, stop_all_sound
     stop_all_sound = True
+    # 릴레이는 active-low 기준: HIGH가 꺼짐입니다.
     relay = Pin(PIN_RELAY_IN, Pin.OUT, value=1)
-    relay = Pin(PIN_RELAY_IN, Pin.IN)
     sig_a = Pin(PIN_BELL_A, Pin.IN, Pin.PULL_DOWN)
     sig_b = Pin(PIN_BELL_B, Pin.IN, Pin.PULL_UP)
     led_a_on = False
@@ -130,12 +135,46 @@ def set_mode(next_mode):
         print("BELL_STATUS mode=" + mode)
 
 
+def trigger_remote_bell(button):
+    global led_a_on, led_b_on, sig_a, sig_b, relay, play_a_sound, play_b_sound
+
+    button = button.upper()
+    if mode == "idle":
+        print("BELL_STATUS ignored=idle")
+        return
+
+    if button == "B":
+        led_b_on = True
+        sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
+        if mode == "low":
+            play_b_sound = True
+        else:
+            relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
+            led_a_on = True
+            sig_a = Pin(PIN_BELL_A, Pin.OUT, value=0)
+            play_a_sound = True
+    else:
+        relay = Pin(PIN_RELAY_IN, Pin.OUT, value=0)
+        led_a_on = True
+        sig_a = Pin(PIN_BELL_A, Pin.OUT, value=0)
+        play_a_sound = True
+        if mode == "high":
+            led_b_on = True
+            sig_b = Pin(PIN_BELL_B, Pin.OUT, value=0)
+
+    print("BELL_STATUS remote=" + ("B" if button == "B" else "A"))
+
+
 def handle_command(command):
     command = command.strip().upper()
     if command == "MODE LOW":
         set_mode("low")
     elif command == "MODE HIGH":
         set_mode("high")
+    elif command == "BELL A":
+        trigger_remote_bell("A")
+    elif command == "BELL B":
+        trigger_remote_bell("B")
     elif command == "MODE IDLE" or command == "RESET":
         set_mode("idle")
         force_reset_all()
@@ -143,7 +182,7 @@ def handle_command(command):
 
 def poll_serial_command():
     global serial_buffer
-    if not select.select([sys.stdin], [], [], 0)[0]:
+    if not stdin_poll.poll(0):
         return
 
     char = sys.stdin.read(1)

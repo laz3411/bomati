@@ -1,0 +1,30 @@
+local ProximityPrompt = script.Parent
+
+
+ProximityPrompt.Triggered:Connect(function(player)
+		script.Parent.Enabled = false
+	script.Parent.Parent.Parent.Point2.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point3.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point4.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point5.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point6.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point7.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point8.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point9.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point10.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point11.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point12.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point13.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point14.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point15.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point16.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point17.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point18.ProximityPrompt.Enabled = false
+	script.Parent.Parent.Parent.Point19.ProximityPrompt.Enabled = false
+		script.Parent.Parent.Parent.Main.Bell:Play()
+		script.Parent.Parent.Parent.Light.Transparency = 0
+	    script.Parent.Parent.Parent.Light2.Transparency = 0
+	end)
+
+
+

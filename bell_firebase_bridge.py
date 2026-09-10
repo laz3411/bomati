@@ -18,6 +18,7 @@ import serial
 
 DEFAULT_FIREBASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app"
 MAX_CONTEXT_AGE_MS = 3_000
+REMOTE_BELL_MAX_AGE_MS = 5_000
 
 
 def firebase_request(url, method, payload=None):
@@ -42,6 +43,20 @@ def read_bell_context(firebase_url):
     return context
 
 
+def read_latest_bell(firebase_url):
+    """Roblox가 발생시킨 최신 벨 이벤트를 읽습니다."""
+    event = firebase_request(f"{firebase_url}/bell/latest.json", "GET")
+    if not isinstance(event, dict):
+        return None
+
+    received_at = event.get("receivedAtMs") or event.get("deviceTimestampMs")
+    if not isinstance(received_at, (int, float)):
+        return None
+    if int(time.time() * 1000) - int(received_at) > REMOTE_BELL_MAX_AGE_MS:
+        return None
+    return event
+
+
 def send_mode(device, context):
     if context.get("active") is True:
         mode = "HIGH" if context.get("isHighFloor") is True else "LOW"
@@ -52,6 +67,15 @@ def send_mode(device, context):
     print(f"[장치] MODE {mode}")
 
 
+def send_remote_bell(device, event):
+    """Roblox에서 발생한 벨을 MicroPython 보드에 전달합니다."""
+    button = str(event.get("button") or "A").upper()
+    command = "BELL B" if button == "B" else "BELL A"
+    device.write(f"{command}\n".encode("ascii"))
+    device.flush()
+    print(f"[장치] 원격 벨 {command}")
+
+
 def bell_event_payload(event, context):
     bus_position = {
         "x": context.get("x"),
@@ -60,6 +84,8 @@ def bell_event_payload(event, context):
     }
     return {
         "type": "bell_press",
+        "source": "physical",
+        "eventId": event.get("eventId") or f"physical-{event.get('timestampMs')}-{event.get('button')}",
         "button": event.get("button"),
         "mode": event.get("mode"),
         "deviceTimestampMs": event.get("timestampMs"),
@@ -103,6 +129,7 @@ def context_key(context):
 def run(port, baud, firebase_url, poll_interval):
     current_context = {"active": False}
     last_context_key = None
+    last_remote_event_id = None
 
     with serial.Serial(port, baudrate=baud, timeout=0.05) as device:
         # USB 연결 때 보드가 재부팅되는 경우가 있어 준비 시간을 둡니다.
@@ -120,6 +147,19 @@ def run(port, baud, firebase_url, poll_interval):
                     if next_key != last_context_key:
                         send_mode(device, current_context)
                         last_context_key = next_key
+
+                    latest_bell = read_latest_bell(firebase_url)
+                    if latest_bell:
+                        source = latest_bell.get("source")
+                        event_id = str(
+                            latest_bell.get("eventId")
+                            or f"{source}-{latest_bell.get('receivedAtMs')}-{latest_bell.get('button')}"
+                        )
+                        # physical 이벤트는 이미 보드에서 발생한 것이므로 다시 보드로 보내지 않습니다.
+                        # source가 없는 예전 Roblox 이벤트도 호환합니다.
+                        if source != "physical" and event_id != last_remote_event_id:
+                            send_remote_bell(device, latest_bell)
+                            last_remote_event_id = event_id
                 except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
                     print(f"[Firebase] 하차벨 상태 읽기 실패: {error}", file=sys.stderr)
                     current_context = {"active": False}
@@ -137,6 +177,7 @@ def run(port, baud, firebase_url, poll_interval):
                 try:
                     event = json.loads(line[len("BELL_EVENT "):])
                     if current_context.get("active") is True:
+                        event.setdefault("source", "physical")
                         publish_bell_event(firebase_url, event, current_context)
                     else:
                         print("[장치] 탑승 버스가 없어 버튼 신호를 무시했습니다.")

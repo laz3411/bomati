@@ -139,7 +139,9 @@ local function getOrCreateBusBellSystem(busModel)
     return system
 end
 
-triggerBusBell = function(busModel, player, triggerReason)
+-- suppressFirebase=true인 경우, 물리 벨에서 이미 Firebase에 기록한 이벤트를
+-- Roblox에서 재생만 하고 다시 Firebase로 되쏘지 않아 무한 반복을 막습니다.
+triggerBusBell = function(busModel, player, triggerReason, suppressFirebase)
     local system = getOrCreateBusBellSystem(busModel)
     if system.isRinging then
         return
@@ -172,45 +174,50 @@ triggerBusBell = function(busModel, player, triggerReason)
         end
     end
 
-    -- 4. 피지컬 하차벨 브리지 및 Firebase로 이벤트 전송
-    task.spawn(function()
-        pcall(function()
-            local position = busModel.PrimaryPart and busModel.PrimaryPart.Position or busModel:GetPivot().Position
-            local isHighFloor = busModel:GetAttribute("isHighFloor") == true
-            local payload = {
-                type = "bell_press",
-                button = player and "A" or "AUTO",
-                mode = isHighFloor and "high" or "low",
-                triggerReason = triggerReason or "MANUAL",
-                playerName = player and player.Name or "AUTO",
-                deviceTimestampMs = DateTime.now().UnixTimestampMillis,
-                receivedAtMs = DateTime.now().UnixTimestampMillis,
-                bus = {
-                    id = busModel:GetFullName(),
-                    name = busModel.Name,
-                    route = tostring(getFirstAttribute(busModel, { "route", "Route", "ROUTE" }, "")),
-                    isHighFloor = isHighFloor,
-                },
-                bellPosition = {
-                    x = round1(position.X),
-                    y = round1(position.Y),
-                    z = round1(position.Z),
+    if not suppressFirebase then
+        -- 4. 피지컬 하차벨 브리지 및 Firebase로 이벤트 전송
+        task.spawn(function()
+            pcall(function()
+                local position = busModel.PrimaryPart and busModel.PrimaryPart.Position or busModel:GetPivot().Position
+                local timestamp = DateTime.now().UnixTimestampMillis
+                local isHighFloor = busModel:GetAttribute("isHighFloor") == true
+                local payload = {
+                    type = "bell_press",
+                    source = player and "roblox" or "roblox_auto",
+                    eventId = string.format("roblox-%d-%d", timestamp, math.floor(os.clock() * 1000)),
+                    button = player and "A" or "AUTO",
+                    mode = isHighFloor and "high" or "low",
+                    triggerReason = triggerReason or "MANUAL",
+                    playerName = player and player.Name or "AUTO",
+                    deviceTimestampMs = timestamp,
+                    receivedAtMs = timestamp,
+                    bus = {
+                        id = busModel:GetFullName(),
+                        name = busModel.Name,
+                        route = tostring(getFirstAttribute(busModel, { "route", "Route", "ROUTE" }, "")),
+                        isHighFloor = isHighFloor,
+                    },
+                    bellPosition = {
+                        x = round1(position.X),
+                        y = round1(position.Y),
+                        z = round1(position.Z),
+                    }
                 }
-            }
-            HttpService:RequestAsync({
-                Url = FIREBASE_DATABASE_URL .. "/bell/latest.json",
-                Method = "PUT",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode(payload)
-            })
-            HttpService:RequestAsync({
-                Url = FIREBASE_DATABASE_URL .. "/bell/events.json",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode(payload)
-            })
+                HttpService:RequestAsync({
+                    Url = FIREBASE_DATABASE_URL .. "/bell/latest.json",
+                    Method = "PUT",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode(payload)
+                })
+                HttpService:RequestAsync({
+                    Url = FIREBASE_DATABASE_URL .. "/bell/events.json",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode(payload)
+                })
+            end)
         end)
-    end)
+    end
 end
 
 resetBusBell = function(busModel)
@@ -915,6 +922,65 @@ local function collectBellContext()
     }
 end
 
+-- 실제 벨에서 Firebase로 올라온 이벤트를 Roblox 버스에서도 재생합니다.
+-- 최신 이벤트만 읽고 eventId를 기억해 중복 재생을 방지합니다.
+local lastPhysicalBellEventId = nil
+local isPollingPhysicalBell = false
+local PHYSICAL_BELL_MAX_AGE_MS = 5_000
+
+local function pollPhysicalBell()
+    if isPollingPhysicalBell then
+        return
+    end
+    isPollingPhysicalBell = true
+
+    task.spawn(function()
+        local success, err = pcall(function()
+            local response = HttpService:RequestAsync({
+                Url = FIREBASE_DATABASE_URL .. "/bell/latest.json",
+                Method = "GET"
+            })
+
+            if not response.Success or not response.Body or response.Body == "null" then
+                return
+            end
+
+            local event = HttpService:JSONDecode(response.Body)
+            if typeof(event) ~= "table" or event.source ~= "physical" then
+                return
+            end
+
+            local receivedAt = tonumber(event.receivedAtMs)
+            if not receivedAt or DateTime.now().UnixTimestampMillis - receivedAt > PHYSICAL_BELL_MAX_AGE_MS then
+                return
+            end
+
+            local eventId = tostring(event.eventId or (tostring(receivedAt) .. ":" .. tostring(event.button)))
+            if eventId == lastPhysicalBellEventId then
+                return
+            end
+            lastPhysicalBellEventId = eventId
+
+            local player = findTargetPlayer()
+            local model = player and select(1, findBusForPlayer(player)) or nil
+            if not model and lastBoardedBus and lastBoardedBus.model and lastBoardedBus.model.Parent then
+                model = lastBoardedBus.model
+            end
+
+            if model then
+                triggerBusBell(model, nil, "PHYSICAL: " .. tostring(event.button or "A"), true)
+            else
+                warn("[로블록스 레이더] 실제 벨 이벤트를 받았지만 탑승 중인 BUS를 찾지 못했습니다.")
+            end
+        end)
+
+        isPollingPhysicalBell = false
+        if not success then
+            warn("[로블록스 레이더] 실제 벨 이벤트 수신 실패:", err)
+        end
+    end)
+end
+
 task.spawn(function()
     while RunService:IsRunning() do
         if not isSending then
@@ -932,6 +998,8 @@ task.spawn(function()
                     bell = bellData,
                     timestamp = DateTime.now().UnixTimestampMillis
                 }
+
+                pollPhysicalBell()
 
                 isSending = true
                 task.spawn(function()

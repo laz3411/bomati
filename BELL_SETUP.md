@@ -4,13 +4,20 @@
 
 1. `roblox_script.lua`를 로블록스 스튜디오의 `ServerScriptService` 아래에 `Script`로 붙여넣고, `TARGET_ROBLOX_USER_NAME`을 본인의 실제 Roblox 영어 사용자명(Player.Name)으로 설정합니다.
 2. 로블록스 상단 메뉴 **[Game Settings] -> [Security] -> "Allow HTTP Requests"** 를 **ON**으로 활성화합니다.
-3. `micropython_bell_controller.py`를 피지컬 하차벨 보드(Raspberry Pi Pico 등)의 `main.py`로 업로드합니다. (시리얼 보드레이트: 115200)
+3. 최신 `micropython_bell_controller.py`를 피지컬 하차벨 보드(Raspberry Pi Pico 등)의 `main.py`로 업로드합니다. (시리얼 보드레이트: 115200)
 4. PC에서 의존성을 설치한 뒤 브리지를 실행합니다:
    ```bash
    py -m pip install -r requirements.txt
    py bell_firebase_bridge.py --port COM5
    ```
    *(포트 번호는 장치가 연결된 실제 포트로 지정하세요)*
+
+### 피지컬 벨 ↔ Roblox 양방향 연동
+
+- Roblox의 `ProximityPrompt` 또는 자동 예약 벨이 울리면 Roblox가 Firebase `/bell/latest`에 `source = roblox` 이벤트를 기록하고, PC 브리지가 보드로 `BELL A` 명령을 보냅니다.
+- 피지컬 A/B 버튼을 누르면 보드가 `BELL_EVENT`를 USB 시리얼로 보내고, PC 브리지가 Firebase에 `source = physical` 이벤트를 기록합니다. Roblox가 이 이벤트를 읽어 게임 안의 탑승 버스 벨도 울립니다.
+- 물리 이벤트를 Roblox에서 다시 Firebase로 되쏘지 않도록 `source`와 `eventId`로 무한 반복을 차단합니다.
+- 양방향 연동을 사용하려면 `roblox_script.lua`, `micropython_bell_controller.py`, `bell_firebase_bridge.py`를 각각 최신 버전으로 적용해야 합니다. 기존에 Studio나 보드에 올린 파일은 자동으로 바뀌지 않습니다.
 
 ---
 
