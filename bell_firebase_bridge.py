@@ -19,6 +19,17 @@ import serial
 DEFAULT_FIREBASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app"
 MAX_CONTEXT_AGE_MS = 3_000
 REMOTE_BELL_MAX_AGE_MS = 5_000
+MODE_REFRESH_INTERVAL_SEC = 2.0
+
+
+def write_device_command(device, command):
+    """MicroPython USB CDC에 한 줄 명령을 전송합니다.
+
+    일부 보드는 연결 직후 첫 LF-only 명령을 놓칠 수 있어 CRLF를 사용합니다.
+    MicroPython 쪽은 CR/LF 모두 처리합니다.
+    """
+    device.write((command + "\r\n").encode("ascii"))
+    device.flush()
 
 
 def firebase_request(url, method, payload=None):
@@ -62,8 +73,7 @@ def send_mode(device, context):
         mode = "HIGH" if context.get("isHighFloor") is True else "LOW"
     else:
         mode = "IDLE"
-    device.write(f"MODE {mode}\n".encode("ascii"))
-    device.flush()
+    write_device_command(device, f"MODE {mode}")
     print(f"[장치] MODE {mode}")
 
 
@@ -71,8 +81,7 @@ def send_remote_bell(device, event):
     """Roblox에서 발생한 벨을 MicroPython 보드에 전달합니다."""
     button = str(event.get("button") or "A").upper()
     command = "BELL B" if button == "B" else "BELL A"
-    device.write(f"{command}\n".encode("ascii"))
-    device.flush()
+    write_device_command(device, command)
     print(f"[장치] 원격 벨 {command}")
 
 
@@ -130,6 +139,7 @@ def run(port, baud, firebase_url, poll_interval):
     current_context = {"active": False}
     last_context_key = None
     last_remote_event_id = None
+    last_mode_sent_at = 0.0
 
     with serial.Serial(port, baudrate=baud, timeout=0.05) as device:
         # USB 연결 때 보드가 재부팅되는 경우가 있어 준비 시간을 둡니다.
@@ -144,9 +154,12 @@ def run(port, baud, firebase_url, poll_interval):
                 try:
                     current_context = read_bell_context(firebase_url)
                     next_key = context_key(current_context)
-                    if next_key != last_context_key:
+                    # 보드가 USB 연결 직후 재부팅해 첫 MODE를 놓쳐도 2초 안에
+                    # 다시 받도록 주기적으로 동일 모드를 재전송합니다.
+                    if next_key != last_context_key or now - last_mode_sent_at >= MODE_REFRESH_INTERVAL_SEC:
                         send_mode(device, current_context)
                         last_context_key = next_key
+                        last_mode_sent_at = now
 
                     latest_bell = read_latest_bell(firebase_url)
                     if latest_bell:
@@ -166,6 +179,7 @@ def run(port, baud, firebase_url, poll_interval):
                     if last_context_key != (False,):
                         send_mode(device, current_context)
                         last_context_key = (False,)
+                        last_mode_sent_at = now
                 next_poll = now + poll_interval
 
             raw_line = device.readline()

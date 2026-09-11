@@ -33,8 +33,15 @@ play_a_sound = False
 play_b_sound = False
 stop_all_sound = False
 serial_buffer = ""
-stdin_poll = select.poll()
-stdin_poll.register(sys.stdin, select.POLLIN)
+stdin_poll = None
+serial_poll_error = None
+try:
+    stdin_poll = select.poll()
+    stdin_poll.register(sys.stdin, select.POLLIN)
+except Exception as error:
+    # USB CDC 스트림을 poll에 등록하지 못하는 보드에서도 벨 본체가
+    # 부팅/물리 버튼 동작까지 멈추지 않도록 합니다.
+    serial_poll_error = error
 
 
 def send_event(button):
@@ -194,24 +201,32 @@ def handle_command(command):
 
 def poll_serial_command():
     global serial_buffer
-    if not stdin_poll.poll(0):
+    if stdin_poll is None:
         return
 
-    char = sys.stdin.read(1)
-    if char == " ":
-        force_reset_all()
-    elif char in "\r\n":
-        if serial_buffer:
-            handle_command(serial_buffer)
-            serial_buffer = ""
-    elif char:
-        serial_buffer += char
-        if len(serial_buffer) > 32:
-            serial_buffer = ""
+    # USB 버퍼에 쌓인 한 줄 전체를 이번 반복에서 모두 비웁니다.
+    while stdin_poll.poll(0):
+        char = sys.stdin.read(1)
+        if not char:
+            return
+        if char == " ":
+            force_reset_all()
+        elif char in "\r\n":
+            if serial_buffer:
+                handle_command(serial_buffer)
+                serial_buffer = ""
+        else:
+            serial_buffer += char
+            if len(serial_buffer) > 32:
+                serial_buffer = ""
 
 
 _thread.start_new_thread(sound_controller_thread, ())
 print("BELL_STATUS ready")
+if stdin_poll is None:
+    print("BELL_STATUS serial=unavailable " + repr(serial_poll_error))
+else:
+    print("BELL_STATUS serial=ready")
 
 while True:
     poll_serial_command()
