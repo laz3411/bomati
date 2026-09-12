@@ -379,6 +379,81 @@
     .bell-alert-banner.show {
       transform: translateX(-50%) translateY(0);
     }
+
+    /* APK/WebView용 데모 로그인과 계정 전환 UI */
+    .demo-login {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 20px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+      background: linear-gradient(180deg, rgba(2, 6, 23, 0.28), rgba(2, 6, 23, 0.94));
+    }
+    .demo-login.hidden { display: none; }
+    .demo-login-card {
+      width: min(100%, 420px);
+      padding: 24px 20px 20px;
+      border: 1px solid rgba(125, 211, 252, 0.35);
+      border-radius: 24px;
+      background: rgba(15, 23, 42, 0.98);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.5);
+      color: #f8fafc;
+    }
+    .demo-login-eyebrow { color: #7dd3fc; font-size: 12px; font-weight: 800; letter-spacing: .08em; }
+    .demo-login-title { margin: 7px 0 6px; font-size: 23px; line-height: 1.2; }
+    .demo-login-copy { color: #cbd5e1; font-size: 13px; line-height: 1.55; }
+    .login-form { display: grid; gap: 11px; margin-top: 18px; }
+    .login-field { display: grid; gap: 6px; color: #cbd5e1; font-size: 12px; font-weight: 700; }
+    .login-input {
+      width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid rgba(148, 163, 184, .32);
+      border-radius: 11px; background: #0f172a; color: #f8fafc; font-size: 15px; outline: none;
+    }
+    .login-input:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, .15); }
+    .login-accessibility { display: flex; align-items: center; gap: 7px; color: #bae6fd; font-size: 12px; cursor: pointer; }
+    .login-accessibility input { accent-color: #38bdf8; }
+    .login-submit {
+      min-height: 48px; border: 0; border-radius: 12px; background: #0284c7; color: #fff; font-size: 15px; font-weight: 800; cursor: pointer;
+    }
+    .login-error { min-height: 16px; color: #fda4af; font-size: 12px; }
+    .demo-profile-list { display: grid; gap: 10px; margin-top: 18px; }
+    .demo-profile-btn {
+      width: 100%; min-height: 64px; padding: 11px 13px; border: 1px solid rgba(148, 163, 184, .28);
+      border-radius: 14px; background: rgba(30, 41, 59, .9); color: #fff; text-align: left; cursor: pointer;
+    }
+    .demo-profile-btn:active { transform: scale(.98); }
+    .demo-profile-btn.mobility { border-color: rgba(56, 189, 248, .7); background: rgba(3, 105, 161, .27); }
+    .demo-profile-name { display: block; font-size: 15px; font-weight: 800; }
+    .demo-profile-detail { display: block; margin-top: 3px; color: #cbd5e1; font-size: 12px; }
+    .demo-login-note { margin-top: 14px; color: #94a3b8; font-size: 11px; line-height: 1.45; }
+    .demo-account-btn {
+      position: absolute; right: calc(14px + env(safe-area-inset-right, 0px)); top: calc(58px + env(safe-area-inset-top, 0px));
+      z-index: 26; max-width: 170px; padding: 7px 10px; border: 1px solid rgba(125, 211, 252, .4);
+      border-radius: 12px; background: rgba(15, 23, 42, .9); color: #e0f2fe; font-size: 11px; font-weight: 700;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+    }
+    .account-menu {
+      position: absolute; right: calc(14px + env(safe-area-inset-right, 0px)); top: calc(98px + env(safe-area-inset-top, 0px));
+      z-index: 27; width: 190px; padding: 10px; border: 1px solid rgba(125, 211, 252, .35); border-radius: 13px;
+      background: rgba(15, 23, 42, .98); box-shadow: 0 12px 28px rgba(0,0,0,.4);
+    }
+    .account-menu.hidden { display: none; }
+    .account-menu-name { padding: 4px 3px 10px; color: #cbd5e1; font-size: 12px; }
+    .account-logout { width: 100%; min-height: 38px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 9px; background: rgba(127, 29, 29, .25); color: #fecaca; font-size: 13px; font-weight: 700; cursor: pointer; }
+
+    @media (max-width: 480px) {
+      .firebase-status { max-width: calc(100vw - 24px); font-size: 10px; }
+      .nearby-bus-pill { top: calc(90px + env(safe-area-inset-top, 0px)); max-width: calc(100vw - 28px); padding: 7px 11px; }
+      .controls-fab { right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+      .btn-fab { width: 48px; height: 48px; }
+      .reservation-sheet { max-height: min(78dvh, 620px); }
+      .sheet-header { padding: 12px 14px 9px; }
+      .sheet-title-group { gap: 5px; flex-wrap: wrap; }
+      .sheet-body { padding: 11px 14px; }
+      .stop-item { padding: 10px; }
+      .demo-login { padding-inline: 12px; }
+    }
   </style>
 
   <!-- 웹뷰(APK) 및 file:// 호환 Firebase SDK -->
@@ -389,6 +464,11 @@
   <div id="viewport">
     <canvas id="mapCanvas"></canvas>
     <div id="firebaseStatus" class="firebase-status">Firebase 연결 확인 중...</div>
+    <button id="demoAccountBtn" class="demo-account-btn" type="button" style="display:none;"></button>
+    <div id="accountMenu" class="account-menu hidden">
+      <div id="accountMenuName" class="account-menu-name"></div>
+      <button id="logoutBtn" class="account-logout" type="button">로그아웃</button>
+    </div>
 
     <!-- 근처 버스 알림 플로팅 버튼 -->
     <div id="nearbyBusPill" class="nearby-bus-pill" style="display: none;"></div>
@@ -431,6 +511,27 @@
 
     <!-- 자유 이동 모드 토스트 -->
     <div id="toast" class="toast">자유 이동 모드 (과녁 클릭 시 내 위치 복귀)</div>
+
+    <!-- 해커톤 시연용 로컬 로그인: 실제 서버 인증·건강정보 수집 없음 -->
+    <div id="demoLogin" class="demo-login" role="dialog" aria-modal="true" aria-label="로그인">
+      <div class="demo-login-card">
+        <div class="demo-login-eyebrow">BOMATI DEMO ACCESS</div>
+        <h1 class="demo-login-title">로그인</h1>
+        <p class="demo-login-copy">로그인 상태는 이 기기에 유지됩니다.</p>
+        <form id="demoLoginForm" class="login-form">
+          <label class="login-field">아이디
+            <input id="loginUserId" class="login-input" type="text" inputmode="text" autocomplete="username" placeholder="아이디 입력" required maxlength="24">
+          </label>
+          <label class="login-field">비밀번호
+            <input id="loginPassword" class="login-input" type="password" inputmode="numeric" autocomplete="current-password" placeholder="비밀번호 입력" required maxlength="32">
+          </label>
+          <label class="login-accessibility"><input id="loginAccessibility" type="checkbox"> 이동지원 모드로 로그인</label>
+          <div id="loginError" class="login-error" role="alert"></div>
+          <button class="login-submit" type="submit">로그인</button>
+        </form>
+        <p class="demo-login-note">해커톤 데모 계정: <b>bomati / 1234</b> 또는 <b>mobility / 1234</b>. 실제 서버 인증·건강정보는 저장하지 않습니다.</p>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -489,6 +590,84 @@
     applyViewport();
 
     // ==========================================
+    // 2-1. APK용 로컬 데모 로그인 (서버 인증/개인정보 미사용)
+    // ==========================================
+    const DEMO_ACCOUNTS = {
+      bomati: { password: '1234', name: '김보마', accessibility: false },
+      mobility: { password: '1234', name: '이봄', accessibility: true }
+    };
+    let demoProfile = null;
+    const demoLoginEl = document.getElementById('demoLogin');
+    const demoAccountBtn = document.getElementById('demoAccountBtn');
+    const accountMenuEl = document.getElementById('accountMenu');
+    const accountMenuNameEl = document.getElementById('accountMenuName');
+
+    function renderDemoProfile() {
+      if (!demoProfile) return;
+      if (demoLoginEl) demoLoginEl.classList.add('hidden');
+      if (demoAccountBtn) {
+        demoAccountBtn.style.display = 'block';
+        demoAccountBtn.textContent = `${demoProfile.accessibility ? '♿ ' : '👤 '}${demoProfile.name}`;
+      }
+      if (accountMenuNameEl) accountMenuNameEl.textContent = `${demoProfile.userId} · ${demoProfile.accessibility ? '이동지원 모드' : '일반 모드'}`;
+    }
+
+    function openLogin() {
+      if (accountMenuEl) accountMenuEl.classList.add('hidden');
+      if (demoLoginEl) demoLoginEl.classList.remove('hidden');
+      const userId = document.getElementById('loginUserId');
+      if (userId) setTimeout(() => userId.focus(), 120);
+    }
+
+    function logoutDemoAccount() {
+      demoProfile = null;
+      try { localStorage.removeItem('bomati_demo_session'); } catch (e) {}
+      if (demoAccountBtn) demoAccountBtn.style.display = 'none';
+      if (accountMenuEl) accountMenuEl.classList.add('hidden');
+      const loginForm = document.getElementById('demoLoginForm');
+      if (loginForm) loginForm.reset();
+      openLogin();
+    }
+
+    try {
+      const savedSession = JSON.parse(localStorage.getItem('bomati_demo_session') || 'null');
+      if (savedSession && savedSession.userId && typeof savedSession.accessibility === 'boolean') demoProfile = savedSession;
+    } catch (e) {}
+    if (demoProfile) renderDemoProfile();
+
+    const loginForm = document.getElementById('demoLoginForm');
+    if (loginForm) {
+      loginForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const userId = String(document.getElementById('loginUserId').value || '').trim().toLowerCase();
+        const password = String(document.getElementById('loginPassword').value || '');
+        const accessibility = document.getElementById('loginAccessibility').checked;
+        const errorEl = document.getElementById('loginError');
+        const account = DEMO_ACCOUNTS[userId];
+        if (!account || account.password !== password) {
+          if (errorEl) errorEl.textContent = '아이디 또는 비밀번호를 확인하세요.';
+          return;
+        }
+        demoProfile = {
+          userId,
+          name: account.name,
+          accessibility: accessibility || account.accessibility
+        };
+        try { localStorage.setItem('bomati_demo_session', JSON.stringify(demoProfile)); } catch (e) {}
+        if (errorEl) errorEl.textContent = '';
+        renderDemoProfile();
+        showToast(`${demoProfile.name}님, 로그인되었습니다.`);
+      });
+    }
+    if (demoAccountBtn) {
+      demoAccountBtn.addEventListener('click', () => {
+        if (accountMenuEl) accountMenuEl.classList.toggle('hidden');
+      });
+    }
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) logoutBtn.addEventListener('click', logoutDemoAccount);
+
+    // ==========================================
     // 3. 지도 이미지 및 내비게이션 줌
     // ==========================================
     const mapImg = new Image();
@@ -527,6 +706,7 @@
     let targetPlayer = null;
     const buses = new Map();
     let globalStops = [];
+    const knownStops = new Map();
 
 
     function normalizeAngle(angle) {
@@ -776,6 +956,23 @@
       const renderedStopKeys = new Set();
       const allStopsToDraw = [];
 
+      const stopKey = (stop) => {
+        const id = stop && (stop.stopId ?? stop.stopID ?? stop.stationId ?? stop.stationID);
+        return id !== undefined && id !== null && String(id).trim() !== ''
+          ? `id:${String(id).trim()}`
+          : `pos:${Math.round(Number(stop.x) * 10) / 10},${Math.round(Number(stop.z) * 10) / 10}`;
+      };
+      const reservationMatchesStop = (reservation, stop) => {
+        if (!reservation || !stop) return false;
+        const reservedId = reservation.targetStopId;
+        if (reservedId !== undefined && reservedId !== null && String(reservedId) !== '') {
+          const id = stop.stopId ?? stop.stopID ?? stop.stationId ?? stop.stationID;
+          return id !== undefined && id !== null && String(id) === String(reservedId);
+        }
+        // targetStopId가 없는 기존 Firebase 예약은 이전 순번 방식으로 호환합니다.
+        return Number(reservation.targetStopIndex) === Number(stop.index);
+      };
+
       // 1. Firebase에서 수집된 전역 정류장 목록
       if (globalStops && globalStops.length > 0) {
         allStopsToDraw.push(...globalStops);
@@ -789,7 +986,7 @@
 
       allStopsToDraw.forEach((stop) => {
         if (!stop || stop.x === undefined || stop.z === undefined) return;
-        const key = `${Math.round(stop.x * 10) / 10},${Math.round(stop.z * 10) / 10}`;
+        const key = stopKey(stop);
         if (renderedStopKeys.has(key)) return;
         renderedStopKeys.add(key);
 
@@ -798,7 +995,7 @@
         // 예약 여부 확인
         let isReserved = false;
         for (const [busKey, res] of Object.entries(currentReservations)) {
-          if (res && Number(res.targetStopIndex) === Number(stop.index)) {
+          if (reservationMatchesStop(res, stop)) {
             isReserved = true;
             break;
           }
@@ -844,7 +1041,7 @@
         ctx.lineWidth = Math.max(2.6 / viewScale, 1.6);
         ctx.strokeStyle = 'rgba(15, 23, 42, 0.92)';
         ctx.fillStyle = isReserved ? '#fef08a' : '#f8fafc';
-        const label = isReserved ? `🔔 ${stop.name || stop.index}` : String(stop.name || stop.index || '정류장');
+        const label = isReserved ? `🔔 ${stop.name || stop.stopId || stop.index}` : String(stop.name || stop.stopId || stop.index || '정류장');
         ctx.strokeText(label, 0, -pinRadius - (2 / viewScale));
         ctx.fillText(label, 0, -pinRadius - (2 / viewScale));
 
@@ -1032,6 +1229,36 @@
         return Array.isArray(value) ? value.filter(Boolean) : Object.values(value).filter(Boolean);
       }
 
+      // Firebase 배열/객체와 위치 객체(position, Position, pos) 형식을 모두 지도 좌표로 통일합니다.
+      // 서버가 정류장 목록을 부분 갱신하는 동안에도 잘못된 항목 하나가 전체 표시를 막지 않습니다.
+      function normalizeStops(value) {
+        return normalizeList(value).map((raw) => {
+          if (!raw || typeof raw !== 'object') return null;
+          const position = raw.position || raw.Position || raw.pos || {};
+          const x = raw.x !== undefined ? raw.x : (raw.X !== undefined ? raw.X : position.x ?? position.X);
+          const z = raw.z !== undefined ? raw.z : (raw.Z !== undefined ? raw.Z : position.z ?? position.Z);
+          if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(z))) return null;
+          return Object.assign({}, raw, { x: Number(x), z: Number(z) });
+        }).filter(Boolean);
+      }
+
+      // Firebase PATCH 중 빈 stops가 잠깐 도착해도 이미 인식한 정류장 핀이 사라지지 않게 유지합니다.
+      // 좌표가 바뀐 같은 StopId는 최신 위치/이름으로 갱신하고, 90초 이상 미수신 항목만 정리합니다.
+      function rememberStops(stops) {
+        const now = Date.now();
+        for (const stop of stops) {
+          const id = stop.stopId ?? stop.stopID ?? stop.stationId ?? stop.stationID;
+          const key = id !== undefined && id !== null && String(id).trim() !== ''
+            ? `id:${String(id).trim()}`
+            : `pos:${Math.round(stop.x * 10) / 10},${Math.round(stop.z * 10) / 10}`;
+          knownStops.set(key, Object.assign({}, stop, { _lastSeen: now }));
+        }
+        for (const [key, stop] of knownStops) {
+          if (now - stop._lastSeen > 90000) knownStops.delete(key);
+        }
+        globalStops = Array.from(knownStops.values());
+      }
+
       function updateTargetPlayer(players) {
         const list = normalizeList(players).filter(p =>
           p && typeof p === 'object' &&
@@ -1114,7 +1341,11 @@
           }
         }
 
-        replaceBuses(normalizeList(val.buses));
+        const rawBuses = normalizeList(val.buses).map((bus) => Object.assign({}, bus, {
+          allStops: normalizeStops(bus && bus.allStops),
+          upcomingStops: normalizeStops(bus && bus.upcomingStops)
+        }));
+        replaceBuses(rawBuses);
 
         // 이미 등록된 버스 인스턴스에도 고상 플래그 즉시 갱신
         if (latestBellInfo && (latestBellInfo.isHighFloor === true || latestBellInfo.mode === 'high')) {
@@ -1125,9 +1356,10 @@
           }
         }
 
-        if (val.stops) {
-          globalStops = normalizeList(val.stops);
-        }
+        rememberStops([
+          ...normalizeStops(val.stops),
+          ...rawBuses.flatMap((bus) => [...(bus.allStops || []), ...(bus.upcomingStops || [])])
+        ]);
         const stopCount = (globalStops && globalStops.length > 0) ? ` · 정류장 ${globalStops.length}곳` : '';
         setFirebaseStatus(
           `Firebase 연결됨 · 플레이어 ${normalizeList(val.players).length}명 · 버스 ${normalizeList(val.buses).length}대${stopCount}`,
@@ -1153,6 +1385,11 @@
             }
           }
         }
+      });
+
+      // 정류장만 별도로 구독해 위치 데이터 PATCH 타이밍과 무관하게 유지합니다.
+      db.ref('radar/stops').on('value', (snap) => {
+        rememberStops(normalizeStops(snap.val()));
       });
 
       // 3) /radar/floorOverrides 실시간 동기화 (웹에서 변경한 고상/저상 수동 설정)
@@ -1378,6 +1615,8 @@
     let selectedBusId = null;
     let currentReservations = {};
     let bellAlertTimer = null;
+    // Roblox 자동 하차벨 반경과 같게 유지합니다.
+    const RESERVATION_MIN_DISTANCE = 65;
 
     try {
       if (!db) throw new Error('Firebase database is not initialized');
@@ -1456,13 +1695,42 @@
       if (upcoming.length === 0 && bus.allStops && bus.allStops.length > 0) {
         upcoming = bus.allStops;
       }
+      // 노선 폴더의 순번 목록이 아직 오지 않아도, 지도에 수신된 정류장은 예약할 수 있게 합니다.
+      // reserveStop이 좌표를 함께 저장하므로 Roblox도 노선 목록 없이 거리 기반 자동 벨을 실행할 수 있습니다.
+      if (upcoming.length === 0 && globalStops.length > 0) {
+        upcoming = globalStops.map((stop) => Object.assign({}, stop, {
+          distance: Math.hypot(Number(stop.x) - bus.curX, Number(stop.z) - bus.curZ)
+        }));
+      }
       if (upcoming.length === 0) {
-        stopListEl.innerHTML = '<div style="color: #94a3b8; font-size: 13px; padding: 18px 0; text-align: center;">남은 정류장이 없습니다 (노선 정류장 폴더 확인 필요)</div>';
+        if (currentRes) {
+          const legacyLabel = currentRes.targetStopName || currentRes.targetStopId || currentRes.targetStopIndex || '알 수 없는 정류장';
+          stopListEl.innerHTML = `
+            <div style="color: #fbbf24; font-size: 13px; padding: 14px 0 8px; text-align: center;">이전 예약 데이터가 남아 있습니다: ${legacyLabel}</div>
+            <div style="color: #94a3b8; font-size: 12px; padding: 0 0 12px; text-align: center;">현재 수신된 정류장 좌표와 연결되지 않은 이전 형식 데이터입니다.</div>
+            <div style="text-align: center;"><button class="btn-reserved" onclick="cancelReservation('${bus.id}')">이전 예약 데이터 삭제</button></div>`;
+        } else {
+          stopListEl.innerHTML = '<div style="color: #94a3b8; font-size: 13px; padding: 18px 0; text-align: center;">남은 정류장이 없습니다 (노선 정류장 폴더 확인 필요)</div>';
+        }
         return;
       }
 
       upcoming.forEach((stop) => {
-        const isThisReserved = currentRes && Number(currentRes.targetStopIndex) === Number(stop.index);
+        const hasStopId = stop.stopId !== undefined && stop.stopId !== null && String(stop.stopId) !== '';
+        const sameStop = (a, b) => {
+          if (!a || !b) return false;
+          if (a.stopId !== undefined && a.stopId !== null && b.stopId !== undefined && b.stopId !== null) {
+            return String(a.stopId) === String(b.stopId);
+          }
+          return Number(a.index) === Number(b.index);
+        };
+        const isCurrentOrNearby = sameStop(stop, bus.currentStop)
+          || (Number.isFinite(Number(stop.distance)) && Number(stop.distance) <= RESERVATION_MIN_DISTANCE);
+        const isThisReserved = currentRes && (
+          hasStopId && currentRes.targetStopId !== undefined && currentRes.targetStopId !== null
+            ? String(currentRes.targetStopId) === String(stop.stopId)
+            : Number(currentRes.targetStopIndex) === Number(stop.index)
+        );
         const item = document.createElement('div');
         item.className = 'stop-item' + (isThisReserved ? ' reserved' : '');
 
@@ -1471,13 +1739,15 @@
             <div class="stop-index-circle">${stop.index}</div>
             <div>
               <div class="stop-name">${stop.name || ('정류장 ' + stop.index)}</div>
-              <div class="stop-dist">${stop.distance ? Math.round(stop.distance) + 'm 남음' : ''}</div>
+              <div class="stop-dist">${isCurrentOrNearby ? '현재 정류장 또는 매우 가까움 · 예약 불가' : (Number.isFinite(Number(stop.distance)) ? Math.round(stop.distance) + 'm 남음' : '')}</div>
             </div>
           </div>
           <div>
             ${isThisReserved
               ? `<button class="btn-reserved" onclick="cancelReservation('${bus.id}')">🔔 예약됨 (취소)</button>`
-              : `<button class="btn-reserve" onclick="reserveStop('${bus.id}', ${stop.index}, '${(stop.name || ('정류장 ' + stop.index)).replace(/'/g, "\\'")}')">하차 예약</button>`
+              : isCurrentOrNearby
+                ? `<button class="btn-reserve" disabled style="opacity:.5; cursor:not-allowed;">현재 정류장</button>`
+              : `<button class="btn-reserve" onclick="reserveStop('${bus.id}', ${Number(stop.index)}, '${String(stop.stopId || '').replace(/'/g, "\\'")}', '${(stop.name || ('정류장 ' + stop.index)).replace(/'/g, "\\'")}')">하차 예약</button>`
             }
           </div>
         `;
@@ -1485,27 +1755,53 @@
       });
     }
 
-    function reserveStop(busId, stopIndex, stopName) {
+    function reserveStop(busId, stopIndex, stopId, stopName) {
       const bus = buses.get(busId);
       if (!bus) return;
       if (!db) {
         showToast('Firebase 연결 전입니다. 잠시 후 다시 시도하세요.');
         return;
       }
+      const allStops = [...(bus.upcomingStops || []), ...(bus.allStops || []), ...globalStops];
+      const selectedStop = allStops.find((stop) => {
+        if (stopId && stop.stopId !== undefined && stop.stopId !== null) return String(stop.stopId) === String(stopId);
+        return Number(stop.index) === Number(stopIndex);
+      });
+
+      const isCurrentStop = bus.currentStop && selectedStop && (
+        bus.currentStop.stopId !== undefined && bus.currentStop.stopId !== null && selectedStop.stopId !== undefined && selectedStop.stopId !== null
+          ? String(bus.currentStop.stopId) === String(selectedStop.stopId)
+          : Number(bus.currentStop.index) === Number(selectedStop.index)
+      );
+      const isTooClose = selectedStop && Number.isFinite(Number(selectedStop.distance))
+        && Number(selectedStop.distance) <= RESERVATION_MIN_DISTANCE;
+      if (isCurrentStop || isTooClose) {
+        showToast('현재 정류장 또는 매우 가까운 정류장은 하차 예약할 수 없습니다.');
+        return;
+      }
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      // 로그인한 이동지원 이용자는 저상버스 예약 시 자동으로 B(이동지원) 벨을 사용합니다.
+      const useAccessibilityBell = !!(demoProfile && demoProfile.accessibility && !bus.isHighFloor);
       db.ref('radar/reservations/' + busKey).set({
         busId: bus.id,
         route: bus.route,
         targetStopIndex: stopIndex,
+        targetStopId: stopId || null,
         targetStopName: stopName,
+        // 예약 시점의 좌표를 함께 보관해 서버 노선 목록이 잠깐 비어도 자동 벨 목표를 잃지 않습니다.
+        targetStopX: selectedStop ? Number(selectedStop.x) : null,
+        targetStopY: selectedStop && Number.isFinite(Number(selectedStop.y)) ? Number(selectedStop.y) : null,
+        targetStopZ: selectedStop ? Number(selectedStop.z) : null,
+        accessibilityMode: useAccessibilityBell,
         status: 'pending',
         reservedAt: Date.now()
+      }).then(() => {
+        showToast(`🔔 ${stopName} 하차 예약이 완료되었습니다!`);
+        renderReservationSheet();
       }).catch((error) => {
         console.error('[Firebase] 하차 예약 저장 실패:', error);
-        showToast('하차 예약 저장에 실패했습니다. Firebase 규칙을 확인하세요.');
+        showToast('하차 예약 저장에 실패했습니다. Firebase 연결·규칙을 확인하세요.');
       });
-      showToast(`🔔 ${stopName} 하차 예약이 완료되었습니다!`);
-      renderReservationSheet();
     }
 
     function cancelReservation(busId) {

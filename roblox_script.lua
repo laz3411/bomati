@@ -26,6 +26,49 @@ local SEND_INTERVAL = 0.35
 local ARRIVAL_TRIGGER_DISTANCE = 65
 
 local isSending = false
+local radarClearedForAbsentTarget = false
+
+local function isTargetPlayerConnected()
+    -- 대상 사용자를 지정하지 않은 개발 환경에서는 기존 전체 전송 동작을 유지합니다.
+    if not TARGET_ROBLOX_USER_NAME or TARGET_ROBLOX_USER_NAME == "" then
+        return true
+    end
+    local target = TARGET_ROBLOX_USER_NAME:lower()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Name:lower() == target or player.DisplayName:lower() == target then
+            return true
+        end
+    end
+    return false
+end
+
+-- 대상 플레이어가 퇴장하면 지도/예약용 실시간 데이터만 제거합니다.
+-- /bell/events는 디버그 이력으로 남기고, 현재 상태(/bell/latest)는 함께 초기화합니다.
+local function clearLiveRadarData(reason)
+    if radarClearedForAbsentTarget then return end
+    radarClearedForAbsentTarget = true
+    task.spawn(function()
+        local success, err = pcall(function()
+            local radarResponse = HttpService:RequestAsync({
+                Url = RADAR_ENDPOINT,
+                Method = "DELETE"
+            })
+            if not radarResponse.Success then
+                error("radar delete failed: " .. tostring(radarResponse.StatusMessage))
+            end
+            HttpService:RequestAsync({
+                Url = FIREBASE_DATABASE_URL .. "/bell/latest.json",
+                Method = "DELETE"
+            })
+        end)
+        if success then
+            print("[로블록스 레이더] 대상 플레이어 퇴장 -> 라이브 데이터/예약 삭제:", reason)
+        else
+            warn("[로블록스 레이더] 퇴장 데이터 삭제 실패:", err)
+            radarClearedForAbsentTarget = false
+        end
+    end)
+end
 
 print("[로블록스 레이더] Firebase 연동 활성화됨. 대상:", RADAR_ENDPOINT)
 
@@ -96,6 +139,25 @@ local resetBusBell
 local determineIsHighFloor
 local isGameBellTurnedOff
 
+-- 기존 차량마다 제각각인 일반 벨 구조는 그대로 지원하면서, 첨부된
+-- sxnhe_0 구성(Point/SPoint, Light/SLight, Bell/SBell, StopBell/StopBell1)도 구분합니다.
+local function isSpecialBellInstance(instance)
+    local current = instance
+    while current do
+        local name = current.Name:lower()
+        if name == "spoint" or name == "slight" or name:find("special") or name:find("disabled") or name:find("wheelchair") then
+            return true
+        end
+        current = current.Parent
+    end
+    return false
+end
+
+local function addUnique(list, value)
+    if value and not table.find(list, value) then
+        table.insert(list, value)
+    end
+end
 
 local function getOrCreateBusBellSystem(busModel)
     if busBellSystems[busModel] then
@@ -105,40 +167,81 @@ local function getOrCreateBusBellSystem(busModel)
     local system = {
         busModel = busModel,
         prompts = {},
+        normalPrompts = {},
+        specialPrompts = {},
         bellSound = nil,
+        specialBellSound = nil,
         lights = {},
+        specialLights = {},
+        driverLights = {},
+        normalBellValue = nil,
+        specialBellValue = nil,
+        doorOpenValue = nil,
         isRinging = false,
+        isSpecialRinging = false,
         lastTriggeredTime = 0,
-        connectedPrompts = {}
+        connectedPrompts = {},
+        connectedClicks = {}
     }
 
-    local function hookPrompt(prompt)
+    local function hookPrompt(prompt, isSpecial)
         if not prompt:IsA("ProximityPrompt") or system.connectedPrompts[prompt] then
             return
         end
         system.connectedPrompts[prompt] = true
         table.insert(system.prompts, prompt)
+        addUnique(isSpecial and system.specialPrompts or system.normalPrompts, prompt)
 
         prompt.Triggered:Connect(function(player)
             local partName = prompt.Parent and prompt.Parent.Name or "Button"
-            triggerBusBell(busModel, player, "PROXIMITY_PROMPT: " .. partName)
+            triggerBusBell(busModel, player, "PROXIMITY_PROMPT: " .. partName, false, isSpecial)
         end)
+    end
+
+    local function hookClick(click, isSpecial)
+        if not click:IsA("ClickDetector") or system.connectedClicks[click] then return end
+        system.connectedClicks[click] = true
+        click.MouseClick:Connect(function(player)
+            local partName = click.Parent and click.Parent.Name or "Button"
+            triggerBusBell(busModel, player, "CLICK_DETECTOR: " .. partName, false, isSpecial)
+        end)
+    end
+
+    local function registerVisual(desc)
+        local lowerName = desc.Name:lower()
+        if desc:IsA("Sound") then
+            if lowerName == "stopbell1" or lowerName:find("special") then
+                system.specialBellSound = desc
+            elseif (lowerName == "bell" or lowerName:find("bell")) and (not system.bellSound or desc.Name == "Bell" or lowerName == "stopbell") then
+                system.bellSound = desc
+            end
+        elseif desc:IsA("BoolValue") then
+            if lowerName == "sbell" or lowerName:find("specialbell") then
+                system.specialBellValue = desc
+            elseif lowerName == "bell" then
+                system.normalBellValue = desc
+            elseif lowerName == "dooropen" then
+                system.doorOpenValue = desc
+            end
+        elseif desc:IsA("BasePart") or desc:IsA("Light") then
+            if lowerName == "slight" or lowerName:find("speciallight") then
+                addUnique(system.specialLights, desc)
+            elseif lowerName == "driver" or lowerName:find("driverlight") then
+                addUnique(system.driverLights, desc)
+            elseif lowerName == "light" or lowerName == "light2" or lowerName:find("belllight") then
+                addUnique(system.lights, desc)
+            end
+        end
     end
 
     -- 1. 버스 모델 내부의 모든 ProximityPrompt, Main.Bell, Light/Light2 자동 수집 및 이벤트 연결
     for _, desc in ipairs(busModel:GetDescendants()) do
         if desc:IsA("ProximityPrompt") then
-            hookPrompt(desc)
-        elseif desc:IsA("Sound") and (desc.Name == "Bell" or desc.Name:lower():find("bell")) then
-            if not system.bellSound or desc.Name == "Bell" then
-                system.bellSound = desc
-            end
-        elseif desc:IsA("BasePart") or desc:IsA("Light") then
-            local lowerName = desc.Name:lower()
-            if lowerName == "light" or lowerName == "light2" or lowerName:find("belllight") then
-                table.insert(system.lights, desc)
-            end
+            hookPrompt(desc, isSpecialBellInstance(desc.Parent))
+        elseif desc:IsA("ClickDetector") then
+            hookClick(desc, isSpecialBellInstance(desc.Parent))
         end
+        registerVisual(desc)
     end
 
     -- Main 하위 명시적 탐색 (Main.Bell, Main.Light, Main.Light2)
@@ -163,20 +266,21 @@ local function getOrCreateBusBellSystem(busModel)
     -- 실시간으로 생성되거나 로드되는 하차벨 및 프롬프트 동적 감지
     busModel.DescendantAdded:Connect(function(desc)
         if desc:IsA("ProximityPrompt") then
-            hookPrompt(desc)
-        elseif desc:IsA("Sound") and (desc.Name == "Bell" or desc.Name:lower():find("bell")) then
-            if not system.bellSound or desc.Name == "Bell" then
-                system.bellSound = desc
-            end
-        elseif desc:IsA("BasePart") or desc:IsA("Light") then
-            local lowerName = desc.Name:lower()
-            if lowerName == "light" or lowerName == "light2" or lowerName:find("belllight") then
-                if not table.find(system.lights, desc) then
-                    table.insert(system.lights, desc)
-                end
-            end
+            hookPrompt(desc, isSpecialBellInstance(desc.Parent))
+        elseif desc:IsA("ClickDetector") then
+            hookClick(desc, isSpecialBellInstance(desc.Parent))
         end
+        registerVisual(desc)
     end)
+
+    -- RearDoor.DoorOpen 등 차량별 문 열림 BoolValue를 찾아 열리는 순간 벨을 초기화합니다.
+    if system.doorOpenValue then
+        system.doorOpenValue:GetPropertyChangedSignal("Value"):Connect(function()
+            if system.doorOpenValue.Value == true then
+                resetBusBell(busModel, true)
+            end
+        end)
+    end
 
     busBellSystems[busModel] = system
     return system
@@ -184,36 +288,61 @@ end
 
 -- suppressFirebase=true인 경우, 물리 벨에서 이미 Firebase에 기록한 이벤트를
 -- Roblox에서 재생만 하고 다시 Firebase로 되쏘지 않아 무한 반복을 막습니다.
-triggerBusBell = function(busModel, player, triggerReason, suppressFirebase)
+triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isSpecial)
     local system = getOrCreateBusBellSystem(busModel)
-    if system.isRinging then
+    isSpecial = isSpecial == true
+    -- 일반 벨이 켜진 상태에서도 장애인 벨(또는 반대)을 누르면 첨부 스크립트처럼 종류를 전환합니다.
+    if system.isRinging and system.isSpecialRinging == isSpecial then
         return
     end
     system.isRinging = true
+    system.isSpecialRinging = isSpecial
     system.lastTriggeredTime = os.clock()
 
     print(string.format("[하차벨 작동] 버스: %s, 사유: %s, 트리거: %s", busModel.Name, tostring(triggerReason), player and player.Name or "자동예약"))
 
-    -- 1. 모든 ProximityPrompt 일괄 비활성화
+    -- 1. 기존 일반 차량은 모든 프롬프트를 비활성화합니다. SPoint가 있는 차량은
+    --    반대 종류만 활성화하여 일반/장애인 벨을 서로 전환할 수 있게 합니다.
     for _, prompt in ipairs(system.prompts) do
         if prompt.Parent then
             prompt.Enabled = false
         end
     end
+    local switchTargets = isSpecial and system.normalPrompts or system.specialPrompts
+    if #switchTargets > 0 then
+        for _, prompt in ipairs(switchTargets) do
+            if prompt.Parent then prompt.Enabled = true end
+        end
+    end
 
-    -- 2. 하차벨 소리 재생
-    if system.bellSound and system.bellSound.Parent then
-        system.bellSound:Play()
+    -- 2. 일반/장애인 하차벨 상태 및 소리. 일반 벨만 있는 기존 차량은 기존 Sound를 그대로 사용합니다.
+    if isSpecial and system.specialBellValue then
+        system.specialBellValue.Value = true
+    elseif system.normalBellValue then
+        system.normalBellValue.Value = true
+    end
+    local sound = (isSpecial and system.specialBellSound) or system.bellSound
+    if sound and sound.Parent then
+        sound:Stop()
+        sound.TimePosition = 0
+        sound:Play()
     end
 
     -- 3. 하차벨 라이트 점등 (Transparency = 0 또는 Light.Enabled = true)
-    for _, light in ipairs(system.lights) do
+    local lightsToEnable = isSpecial and system.specialLights or system.lights
+    for _, light in ipairs(lightsToEnable) do
         if light.Parent then
             if light:IsA("BasePart") then
                 light.Transparency = 0
             elseif light:IsA("Light") then
                 light.Enabled = true
             end
+        end
+    end
+    for _, light in ipairs(system.driverLights) do
+        if light.Parent then
+            if light:IsA("BasePart") then light.Transparency = 0
+            elseif light:IsA("Light") then light.Enabled = true end
         end
     end
 
@@ -228,7 +357,8 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase)
                     type = "bell_press",
                     source = player and "roblox" or "roblox_auto",
                     eventId = string.format("roblox-%d-%d", timestamp, math.floor(os.clock() * 1000)),
-                    button = player and "A" or "AUTO",
+                    -- 자동 예약의 장애인 벨도 Firebase 브리지가 B 신호로 보드에 전달할 수 있게 명시합니다.
+                    button = isSpecial and "B" or (player and "A" or "AUTO"),
                     mode = isHighFloor and "high" or "low",
                     triggerReason = triggerReason or "MANUAL",
                     playerName = player and player.Name or "AUTO",
@@ -287,7 +417,11 @@ isGameBellTurnedOff = function(system)
     local hasTrackedLight = false
     local anyLightOn = false
 
-    for _, light in ipairs(system.lights) do
+    local trackedLights = {}
+    for _, list in ipairs({ system.lights, system.specialLights, system.driverLights }) do
+        for _, light in ipairs(list) do addUnique(trackedLights, light) end
+    end
+    for _, light in ipairs(trackedLights) do
         if light.Parent then
             hasTrackedLight = true
             if light:IsA("BasePart") then
@@ -310,15 +444,15 @@ isGameBellTurnedOff = function(system)
     end
 
     -- 2. 프롬프트가 외부 스크립트에 의해 다시 활성화된 경우
-    local anyPromptEnabled = false
     for _, prompt in ipairs(system.prompts) do
         if prompt.Parent and prompt.Enabled then
-            anyPromptEnabled = true
-            break
+            -- 장애인/일반 벨 전환을 위해 반대편 입력만 켜둔 경우는 정상 상태입니다.
+            local isExpectedSwitch = (system.isSpecialRinging and table.find(system.normalPrompts, prompt))
+                or ((not system.isSpecialRinging) and table.find(system.specialPrompts, prompt))
+            if not isExpectedSwitch then
+                return true
+            end
         end
-    end
-    if anyPromptEnabled then
-        return true
     end
 
     -- 3. 버스 모델의 명시적 속성 검사
@@ -337,6 +471,7 @@ resetBusBell = function(busModel, notifyFirebase)
     end
 
     system.isRinging = false
+    system.isSpecialRinging = false
     system.lastResetTime = os.clock()
 
     -- 1. 모든 ProximityPrompt 활성화
@@ -347,7 +482,11 @@ resetBusBell = function(busModel, notifyFirebase)
     end
 
     -- 2. 하차벨 라이트 소등 (Transparency = 1 또는 Light.Enabled = false)
-    for _, light in ipairs(system.lights) do
+    local allLights = {}
+    for _, list in ipairs({ system.lights, system.specialLights, system.driverLights }) do
+        for _, light in ipairs(list) do addUnique(allLights, light) end
+    end
+    for _, light in ipairs(allLights) do
         if light.Parent then
             if light:IsA("BasePart") then
                 light.Transparency = 1
@@ -356,6 +495,8 @@ resetBusBell = function(busModel, notifyFirebase)
             end
         end
     end
+    if system.normalBellValue then system.normalBellValue.Value = false end
+    if system.specialBellValue then system.specialBellValue.Value = false end
 
     print(string.format("[하차벨 소등 완료] 버스: %s", busModel.Name))
 
@@ -413,10 +554,22 @@ local function findRouteFolder(routeName)
     end
 
     local routeNameLower = routeName:lower()
+    local routeNumber = routeName:match("%d+")
+    local function matchesRouteFolder(instance)
+        if not (instance:IsA("Folder") or instance:IsA("Model")) then return false end
+        local nameLower = instance.Name:lower()
+        if nameLower == routeNameLower then return true end
+        -- "Route 115", "115번 정류장"처럼 노선번호를 포함한 폴더명도 지원합니다.
+        if routeNumber then
+            local nameNumber = instance.Name:match("%d+")
+            return nameNumber == routeNumber
+        end
+        return false
+    end
 
     -- 2. workspace 직속 대소문자 무관 탐색
     for _, child in ipairs(workspace:GetChildren()) do
-        if (child:IsA("Folder") or child:IsA("Model")) and child.Name:lower() == routeNameLower then
+        if matchesRouteFolder(child) then
             return child
         end
     end
@@ -431,7 +584,7 @@ local function findRouteFolder(routeName)
                 return f
             end
             for _, child in ipairs(container:GetChildren()) do
-                if (child:IsA("Folder") or child:IsA("Model")) and child.Name:lower() == routeNameLower then
+                if matchesRouteFolder(child) then
                     return child
                 end
             end
@@ -440,7 +593,7 @@ local function findRouteFolder(routeName)
 
     -- 4. workspace 전체에서 폴더명 일치 탐색
     for _, desc in ipairs(workspace:GetDescendants()) do
-        if (desc:IsA("Folder") or desc:IsA("Model")) and desc.Name:lower() == routeNameLower then
+        if matchesRouteFolder(desc) then
             return desc
         end
     end
@@ -474,8 +627,15 @@ local function extractStopsFromFolder(folder)
 
         if pos then
             local stopName = getFirstAttribute(child, { "StopName", "stopName", "Name", "정류장명" }, child.Name)
+            -- StopId(정류장 고유 번호)가 있으면 노선별 순번과 분리해 사용합니다.
+            -- 같은 실제 정류장을 여러 노선 폴더에 넣어도 지도/예약에서 하나로 매칭됩니다.
+            local stopId = getFirstAttribute(child, {
+                "StopId", "stopId", "StopNumber", "stopNumber", "StationId", "stationId",
+                "UniqueStopId", "uniqueStopId", "정류장고유번호", "정류장번호"
+            }, nil)
             table.insert(stops, {
                 index = num,
+                stopId = stopId ~= nil and tostring(stopId) or nil,
                 name = tostring(stopName),
                 instance = child,
                 position = pos,
@@ -483,6 +643,37 @@ local function extractStopsFromFolder(folder)
                 y = round1(pos.Y),
                 z = round1(pos.Z)
             })
+        end
+    end
+
+    -- 정류장 Part가 노선 폴더 내부의 하위 폴더/모델에 들어있는 차량도 지원합니다.
+    -- 직접 자식에서 찾지 못한 경우에만 재귀 탐색하여 중복 전송을 막습니다.
+    if #stops == 0 then
+        for _, desc in ipairs(folder:GetDescendants()) do
+            if desc:IsA("BasePart") then
+                local hasStopMetadata = desc:GetAttribute("StopId") ~= nil
+                    or desc:GetAttribute("stopId") ~= nil
+                    or desc:GetAttribute("StopName") ~= nil
+                    or desc:GetAttribute("정류장명") ~= nil
+                local num = tonumber(desc.Name:match("%d+"))
+                if hasStopMetadata or num then
+                    local pos = desc.Position
+                    local stopName = getFirstAttribute(desc, { "StopName", "stopName", "Name", "정류장명" }, desc.Name)
+                    local stopId = getFirstAttribute(desc, {
+                        "StopId", "stopId", "StopNumber", "stopNumber", "StationId", "stationId",
+                        "UniqueStopId", "uniqueStopId", "정류장고유번호", "정류장번호"
+                    }, nil)
+                    table.insert(stops, {
+                        index = num or autoIndex,
+                        stopId = stopId ~= nil and tostring(stopId) or nil,
+                        name = tostring(stopName),
+                        instance = desc,
+                        position = pos,
+                        x = round1(pos.X), y = round1(pos.Y), z = round1(pos.Z)
+                    })
+                    autoIndex = autoIndex + 1
+                end
+            end
         end
     end
 
@@ -525,7 +716,9 @@ local function collectAllMapStops()
     local seenPositions = {}
 
     local function addStop(stop)
-        local key = string.format("%.1f,%.1f", stop.x, stop.z)
+        -- 고유 번호가 설정된 정류장은 위치가 조금 달라도 같은 하나의 정류장으로 표시합니다.
+        local key = stop.stopId and ("id:" .. tostring(stop.stopId))
+            or string.format("pos:%.1f,%.1f", stop.x, stop.z)
         if not seenPositions[key] then
             seenPositions[key] = true
             table.insert(allStops, stop)
@@ -550,19 +743,40 @@ local function collectAllMapStops()
             end
             if pos then
                 local num = tonumber(tagged.Name:match("%d+")) or (#allStops + 1)
-                local stopName = getFirstAttribute(tagged, { "StopName", "stopName", "Name", "정류장명" }, tagged.Name)
-                addStop({
-                    index = num,
-                    name = tostring(stopName),
-                    x = round1(pos.X),
-                    y = round1(pos.Y),
-                    z = round1(pos.Z)
-                })
+                local explicitStopName = getFirstAttribute(tagged, { "StopName", "stopName", "정류장명" }, nil)
+                local stopId = getFirstAttribute(tagged, {
+                    "StopId", "stopId", "StopNumber", "stopNumber", "StationId", "stationId",
+                    "UniqueStopId", "uniqueStopId", "정류장고유번호", "정류장번호"
+                }, nil)
+                local lowerName = tagged.Name:lower()
+                -- 단순 ArrivalSensor 같은 감지 파트는 지도 정류장으로 쓰지 않습니다.
+                -- 실제 정류장은 이름에 stop/station/정류장이 있거나 StopName/StopId 속성이 있어야 합니다.
+                local looksLikeStop = lowerName:find("stop") or lowerName:find("station") or lowerName:find("정류장")
+                if explicitStopName or stopId ~= nil or looksLikeStop then
+                    addStop({
+                        index = num,
+                        stopId = stopId ~= nil and tostring(stopId) or nil,
+                        name = tostring(explicitStopName or tagged.Name),
+                        x = round1(pos.X),
+                        y = round1(pos.Y),
+                        z = round1(pos.Z)
+                    })
+                end
             end
         end
     end
 
     return allStops
+end
+
+-- 게임 접속 직후 노선 탐색이 한 프레임 늦어도 이미 확인한 정류장을 빈 배열로 덮어쓰지 않습니다.
+local lastKnownMapStops = {}
+local function collectStableMapStops()
+    local freshStops = collectAllMapStops()
+    if #freshStops > 0 then
+        lastKnownMapStops = freshStops
+    end
+    return lastKnownMapStops
 end
 
 -- =========================================================================
@@ -626,6 +840,7 @@ local function calculateStopProgress(model, routeStops, frontPart, backPart, bus
         local dist = (referencePos - stop.position).Magnitude
         table.insert(allStopsData, {
             index = stop.index,
+            stopId = stop.stopId,
             name = stop.name,
             x = stop.x,
             y = stop.y,
@@ -638,7 +853,8 @@ local function calculateStopProgress(model, routeStops, frontPart, backPart, bus
         local isCurrent = currentStop and (stop.index == currentStop.index)
         if not isPassed and not isCurrent then
             table.insert(upcomingStops, {
-                index = stop.index,
+            index = stop.index,
+            stopId = stop.stopId,
                 name = stop.name,
                 x = stop.x,
                 y = stop.y,
@@ -650,6 +866,7 @@ local function calculateStopProgress(model, routeStops, frontPart, backPart, bus
 
     local currentStopData = currentStop and {
         index = currentStop.index,
+        stopId = currentStop.stopId,
         name = currentStop.name,
         distance = round1(closestDist)
     } or nil
@@ -1166,25 +1383,47 @@ local function collectBusData()
             local reservation = activeReservations[busKey] or activeReservations[model.Name]
             if reservation and (reservation.status == "pending" or reservation.status == nil) then
                 local targetIndex = tonumber(reservation.targetStopIndex)
+                local targetStopId = reservation.targetStopId and tostring(reservation.targetStopId) or nil
+                local targetStop = nil
                 for _, stop in ipairs(routeStops) do
-                    if stop.index == targetIndex then
-                        local referencePos = frontPart and frontPart.Position or pos
-                        local distToTarget = (referencePos - stop.position).Magnitude
-                        if distToTarget <= ARRIVAL_TRIGGER_DISTANCE then
-                            triggerBusBell(model, nil, "AUTO_RESERVATION: " .. stop.name)
-                            reservation.status = "triggered"
-                            task.spawn(function()
-                                pcall(function()
-                                    HttpService:RequestAsync({
-                                        Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. busKey .. "/status.json",
-                                        Method = "PUT",
-                                        Headers = { ["Content-Type"] = "application/json" },
-                                        Body = HttpService:JSONEncode("triggered")
-                                    })
-                                end)
-                            end)
-                        end
+                    -- 신규 예약은 정류장 고유 번호를 우선 사용합니다. 예전 예약은 순번으로 계속 호환합니다.
+                    local isTarget = targetStopId and stop.stopId and tostring(stop.stopId) == targetStopId
+                        or (not targetStopId and stop.index == targetIndex)
+                    if isTarget then
+                        targetStop = stop
                         break
+                    end
+                end
+
+                -- 새 웹 예약은 좌표도 저장합니다. 게임 접속 직후 routeStops가 아직 비어도 자동 예약이 작동합니다.
+                if not targetStop then
+                    local x, y, z = tonumber(reservation.targetStopX), tonumber(reservation.targetStopY), tonumber(reservation.targetStopZ)
+                    if x and z then
+                        targetStop = {
+                            name = tostring(reservation.targetStopName or "예약 정류장"),
+                            position = Vector3.new(x, y or pos.Y, z)
+                        }
+                    end
+                end
+
+                if targetStop then
+                    local referencePos = frontPart and frontPart.Position or pos
+                    local distToTarget = (referencePos - targetStop.position).Magnitude
+                    if distToTarget <= ARRIVAL_TRIGGER_DISTANCE then
+                        -- 장애인 모드 + 저상버스이면 B(장애인) 벨을, 그 외에는 기존 일반 벨을 사용합니다.
+                        local useAccessibilityBell = reservation.accessibilityMode == true and not isHighFloor
+                        triggerBusBell(model, nil, "AUTO_RESERVATION: " .. targetStop.name, false, useAccessibilityBell)
+                        reservation.status = "triggered"
+                        task.spawn(function()
+                            pcall(function()
+                                HttpService:RequestAsync({
+                                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. busKey .. "/status.json",
+                                    Method = "PUT",
+                                    Headers = { ["Content-Type"] = "application/json" },
+                                    Body = HttpService:JSONEncode("triggered")
+                                })
+                            end)
+                        end)
                     end
                 end
             end
@@ -1655,7 +1894,8 @@ local function pollPhysicalBellFast()
             end
 
             if model then
-                triggerBusBell(model, nil, "PHYSICAL: " .. tostring(event.button or "A"), true)
+                local button = tostring(event.button or "A"):upper()
+                triggerBusBell(model, nil, "PHYSICAL: " .. button, true, button == "B" or button == "SPECIAL")
             else
                 warn("[로블록스 레이더] 실제 벨 이벤트를 받았지만 탑승 중인 BUS를 찾지 못했습니다.")
             end
@@ -1673,9 +1913,22 @@ task.spawn(function()
     end
 end)
 
+Players.PlayerRemoving:Connect(function(player)
+    if TARGET_ROBLOX_USER_NAME ~= "" and (
+        player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower()
+        or player.DisplayName:lower() == TARGET_ROBLOX_USER_NAME:lower()
+    ) then
+        clearLiveRadarData("PlayerRemoving: " .. player.Name)
+    end
+end)
+
 task.spawn(function()
     while RunService:IsRunning() do
-        if not isSending then
+        if not isTargetPlayerConnected() then
+            -- PlayerRemoving 이벤트보다 먼저/나중에 루프가 돌더라도 라이브 데이터를 다시 만들지 않습니다.
+            clearLiveRadarData("target not connected")
+        elseif not isSending then
+            radarClearedForAbsentTarget = false
             -- 좌표/탑승 정보 수집 오류가 나도 전체 루프가 죽지 않도록 보호합니다.
             local collectSuccess, playersData, busesData, bellData = pcall(function()
                 local bell = collectBellContext()
@@ -1691,7 +1944,7 @@ task.spawn(function()
                     players = playersData,
                     buses = busesData,
                     bell = bellData,
-                    stops = collectAllMapStops(),
+                    stops = collectStableMapStops(),
                     timestamp = DateTime.now().UnixTimestampMillis
                 }
 
@@ -1700,7 +1953,10 @@ task.spawn(function()
                     local success, err = pcall(function()
                         local radarResponse = HttpService:RequestAsync({
                             Url = RADAR_ENDPOINT,
-                            Method = "PUT",
+                            -- PUT은 /radar 전체를 교체하므로 웹이 저장한
+                            -- /radar/reservations까지 매 전송마다 삭제합니다.
+                            -- PATCH로 위치/벨 데이터만 갱신해 예약을 보존합니다.
+                            Method = "PATCH",
                             Headers = { ["Content-Type"] = "application/json" },
                             Body = HttpService:JSONEncode(radarData)
                         })
