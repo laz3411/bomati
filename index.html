@@ -202,6 +202,15 @@
       padding: 2px 7px;
       border-radius: 12px;
       color: #fff;
+      cursor: pointer;
+      transition: transform 0.15s, background-color 0.2s, filter 0.15s;
+    }
+    .bus-floor-badge:hover {
+      transform: scale(1.08);
+      filter: brightness(1.15);
+    }
+    .bus-floor-badge:active {
+      transform: scale(0.95);
     }
     .badge-low { background: #16a34a; }
     .badge-high { background: #ea580c; }
@@ -406,7 +415,7 @@
       <div class="sheet-header">
         <div class="sheet-title-group">
           <span id="sheetRouteBadge" class="bus-route-badge">BUS</span>
-          <span id="sheetFloorBadge" class="bus-floor-badge badge-low">저상</span>
+          <span id="sheetFloorBadge" class="bus-floor-badge badge-high" title="클릭하여 고상 / 저상 차종 수동 전환">고상</span>
           <span id="sheetBellBadge" class="bell-status-badge" style="display: none;">🔔 하차벨 울림</span>
         </div>
         <button class="btn-close-sheet" onclick="closeReservationSheet()">✕</button>
@@ -517,6 +526,8 @@
     // ==========================================
     let targetPlayer = null;
     const buses = new Map();
+    let globalStops = [];
+
 
     function normalizeAngle(angle) {
       if (typeof angle !== 'number' || Number.isNaN(angle)) return 0;
@@ -530,11 +541,84 @@
       return normalizeAngle(current + diff * amount);
     }
 
+    let latestBellInfo = null;
+    const floorOverrides = new Map();
+    try {
+      const saved = JSON.parse(localStorage.getItem('bomati_floor_overrides') || '{}');
+      for (const [k, v] of Object.entries(saved)) {
+        floorOverrides.set(k, v === true);
+      }
+    } catch (e) {}
+
+    function saveFloorOverride(key, isHigh) {
+      if (!key) return;
+      floorOverrides.set(String(key), isHigh);
+      try {
+        const obj = {};
+        for (const [k, v] of floorOverrides) obj[k] = v;
+        localStorage.setItem('bomati_floor_overrides', JSON.stringify(obj));
+      } catch (e) {}
+    }
+
+    // true/false만으로는 "값이 없음"과 명시적인 저상(false)을 구분할 수 없습니다.
+    // Firebase/Roblox Attribute가 문자열 또는 숫자로 직렬화되는 경우도 처리합니다.
+    function parseFloorValue(val) {
+      if (val === true || val === 1) return true;
+      if (val === false || val === 0) return false;
+      if (typeof val !== 'string') return null;
+
+      const s = val.toLowerCase().trim();
+      if (['true', 'high', '고상', '1', 'yes', 'y', 'twostep', '투스텝'].includes(s)) return true;
+      if (['false', 'low', '저상', '초저상', '0', 'no', 'n', 'nonstep', '논스텝'].includes(s)) return false;
+      return null;
+    }
+
+    function isBusHighFloor(rawBus) {
+      if (!rawBus) return false;
+      const id = String(rawBus.id || rawBus.name || '');
+      const busName = String(rawBus.name || '');
+
+      // 1. 사용자 직접 토글 오버라이드 최우선 적용
+      if (floorOverrides.has(id)) return floorOverrides.get(id);
+      if (busName && floorOverrides.has(busName)) return floorOverrides.get(busName);
+
+      // 2. 하차벨 노드(/bell/latest 또는 radar.bell)에서 고상으로 판별된 경우
+      if (latestBellInfo && latestBellInfo.active !== false) {
+        const isBellHigh = latestBellInfo.isHighFloor === true || latestBellInfo.mode === 'high';
+        if (isBellHigh) {
+          const bellBusId = String(latestBellInfo.busId || latestBellInfo.busName || '');
+          if (!bellBusId || bellBusId === id || bellBusId === busName || buses.size <= 1) {
+            return true;
+          }
+        }
+      }
+
+      // 3. 전송된 명시적 차종값이 이름 키워드보다 항상 우선합니다.
+      // 예: 이름에 "High"가 들어 있어도 isHighFloor: false면 저상입니다.
+      const explicitHighFloor = parseFloorValue(rawBus.isHighFloor);
+      if (explicitHighFloor !== null) return explicitHighFloor;
+
+      const explicitFloorType = parseFloorValue(rawBus.floorType);
+      if (explicitFloorType !== null) return explicitFloorType;
+
+      // 4. 버스 이름 또는 ID에 고상 키워드(유니버스, 그랜버드, 고상 등)가 포함된 경우
+      const nameLower = (busName + ' ' + id).toLowerCase();
+      const highKeywords = ['고상', 'high', 'universe', '유니버스', 'granbird', '그랜버드', 'aerospace', '에어로스페이스', 'fx116', 'fx120', 'fx212', 'bh090', 'bh115', 'bh116', 'bh120', 'bx212', '투스텝', 'twostep'];
+      const lowKeywords = ['저상', 'low', '초저상', 'nonstep'];
+      const hasLow = lowKeywords.some(k => nameLower.includes(k));
+      if (!hasLow && highKeywords.some(k => nameLower.includes(k))) {
+        return true;
+      }
+
+      return false;
+    }
+
     function upsertBus(rawBus) {
-      if (!rawBus || rawBus.x === undefined || rawBus.z === undefined) return;
+      if (!rawBus || !Number.isFinite(Number(rawBus.x)) || !Number.isFinite(Number(rawBus.z))) return;
 
       const id = String(rawBus.id || rawBus.name || `${rawBus.x},${rawBus.z}`);
       const nextAngle = normalizeAngle(rawBus.angle || 0);
+      const isHigh = isBusHighFloor(rawBus);
       const existing = buses.get(id);
 
       if (!existing) {
@@ -542,7 +626,7 @@
           id,
           name: rawBus.name || '',
           route: rawBus.route || '',
-          isHighFloor: rawBus.isHighFloor === true,
+          isHighFloor: isHigh,
           curX: Number(rawBus.x),
           curZ: Number(rawBus.z),
           curAngle: nextAngle,
@@ -560,7 +644,7 @@
 
       existing.name = rawBus.name || existing.name;
       existing.route = rawBus.route || existing.route;
-      existing.isHighFloor = rawBus.isHighFloor === true;
+      existing.isHighFloor = isHigh;
       existing.targetX = Number(rawBus.x);
       existing.targetZ = Number(rawBus.z);
       existing.targetAngle = nextAngle;
@@ -690,59 +774,82 @@
 
     function drawStopMarkers(ctx) {
       const renderedStopKeys = new Set();
+      const allStopsToDraw = [];
 
+      // 1. Firebase에서 수집된 전역 정류장 목록
+      if (globalStops && globalStops.length > 0) {
+        allStopsToDraw.push(...globalStops);
+      }
+
+      // 2. 각 버스의 allStops / upcomingStops
       for (const bus of buses.values()) {
-        const stopsToDraw = (bus.allStops && bus.allStops.length > 0) ? bus.allStops : (bus.upcomingStops || []);
-        const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
-        const res = currentReservations[busKey];
+        const stops = (bus.allStops && bus.allStops.length > 0) ? bus.allStops : (bus.upcomingStops || []);
+        allStopsToDraw.push(...stops);
+      }
 
-        stopsToDraw.forEach((stop) => {
-          const key = `${stop.x},${stop.z}`;
-          if (renderedStopKeys.has(key)) return;
-          renderedStopKeys.add(key);
+      allStopsToDraw.forEach((stop) => {
+        if (!stop || stop.x === undefined || stop.z === undefined) return;
+        const key = `${Math.round(stop.x * 10) / 10},${Math.round(stop.z * 10) / 10}`;
+        if (renderedStopKeys.has(key)) return;
+        renderedStopKeys.add(key);
 
-          const { x: px, y: py } = worldToMap(stop.x, stop.z);
-          const isReserved = res && Number(res.targetStopIndex) === Number(stop.index);
+        const { x: px, y: py } = worldToMap(stop.x, stop.z);
 
-          ctx.save();
-          ctx.translate(px, py);
-
-          if (isReserved) {
-            // 예약된 정류장은 화려한 펄스 링 표시
-            const pulseR = 12 + Math.sin(pulse * 2) * 4;
-            ctx.beginPath();
-            ctx.arc(0, 0, pulseR / viewScale, 0, Math.PI * 2);
-            ctx.strokeStyle = '#fbbf24';
-            ctx.lineWidth = 2.5 / viewScale;
-            ctx.stroke();
-
-            ctx.fillStyle = 'rgba(251, 191, 36, 0.25)';
-            ctx.fill();
+        // 예약 여부 확인
+        let isReserved = false;
+        for (const [busKey, res] of Object.entries(currentReservations)) {
+          if (res && Number(res.targetStopIndex) === Number(stop.index)) {
+            isReserved = true;
+            break;
           }
+        }
 
-          // 기본 정류장 핀
+        ctx.save();
+        ctx.translate(px, py);
+
+        if (isReserved) {
+          // 예약된 정류장 황금빛 펄스 링
+          const pulseR = 14 + Math.sin(pulse * 2) * 4;
           ctx.beginPath();
-          ctx.arc(0, 0, 4.5 / viewScale, 0, Math.PI * 2);
-          ctx.fillStyle = isReserved ? '#fbbf24' : '#0284c7';
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 1.2 / viewScale;
-          ctx.fill();
+          ctx.arc(0, 0, pulseR / viewScale, 0, Math.PI * 2);
+          ctx.strokeStyle = '#fbbf24';
+          ctx.lineWidth = 2.5 / viewScale;
           ctx.stroke();
 
-          // 정류장 번호 또는 이름 라벨
-          ctx.font = `bold ${Math.max(7 / viewScale, 4.2)}px -apple-system, sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'bottom';
-          ctx.lineWidth = 2.2 / viewScale;
-          ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
-          ctx.fillStyle = isReserved ? '#fef08a' : '#f8fafc';
-          const label = isReserved ? `🔔 ${stop.name || stop.index}` : String(stop.name || stop.index);
-          ctx.strokeText(label, 0, -6 / viewScale);
-          ctx.fillText(label, 0, -6 / viewScale);
+          ctx.fillStyle = 'rgba(251, 191, 36, 0.3)';
+          ctx.fill();
+        }
 
-          ctx.restore();
-        });
-      }
+        // 정류장 핀 (외곽 그림자 + 원형 핀)
+        const pinRadius = Math.max(5.5 / viewScale, 3.8);
+        ctx.beginPath();
+        ctx.arc(0, 0, pinRadius, 0, Math.PI * 2);
+        ctx.fillStyle = isReserved ? '#fbbf24' : '#0284c7';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(1.5 / viewScale, 1.0);
+        ctx.fill();
+        ctx.stroke();
+
+        // 중앙 화이트 도트
+        ctx.beginPath();
+        ctx.arc(0, 0, pinRadius * 0.45, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+
+        // 정류장 이름 또는 번호 라벨 (선명한 외곽선)
+        const fontSize = Math.max(7.5 / viewScale, 4.5);
+        ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.lineWidth = Math.max(2.6 / viewScale, 1.6);
+        ctx.strokeStyle = 'rgba(15, 23, 42, 0.92)';
+        ctx.fillStyle = isReserved ? '#fef08a' : '#f8fafc';
+        const label = isReserved ? `🔔 ${stop.name || stop.index}` : String(stop.name || stop.index || '정류장');
+        ctx.strokeText(label, 0, -pinRadius - (2 / viewScale));
+        ctx.fillText(label, 0, -pinRadius - (2 / viewScale));
+
+        ctx.restore();
+      });
     }
 
     function drawBusMarkers(ctx) {
@@ -991,15 +1098,77 @@
         // 오래된 /players 노드와 동시에 읽으면 낡은 좌표가 새 좌표를
         // 덮어쓰는 경쟁 상태가 생길 수 있습니다.
         updateTargetPlayer(val.players || []);
+
+        // 하차벨 및 고상 모드 동기화
+        if (val.bell) {
+          latestBellInfo = val.bell;
+          const isBellHigh = val.bell.isHighFloor === true || val.bell.mode === 'high';
+          if (isBellHigh) {
+            const rawBuses = normalizeList(val.buses);
+            for (const b of rawBuses) {
+              if (b.id === val.bell.busId || b.name === val.bell.busName || rawBuses.length === 1) {
+                b.isHighFloor = true;
+                b.floorType = 'high';
+              }
+            }
+          }
+        }
+
         replaceBuses(normalizeList(val.buses));
+
+        // 이미 등록된 버스 인스턴스에도 고상 플래그 즉시 갱신
+        if (latestBellInfo && (latestBellInfo.isHighFloor === true || latestBellInfo.mode === 'high')) {
+          for (const bus of buses.values()) {
+            if (bus.id === latestBellInfo.busId || bus.name === latestBellInfo.busName || buses.size === 1) {
+              bus.isHighFloor = true;
+            }
+          }
+        }
+
+        if (val.stops) {
+          globalStops = normalizeList(val.stops);
+        }
+        const stopCount = (globalStops && globalStops.length > 0) ? ` · 정류장 ${globalStops.length}곳` : '';
         setFirebaseStatus(
-          `Firebase 연결됨 · 플레이어 ${normalizeList(val.players).length}명 · 버스 ${normalizeList(val.buses).length}대`,
+          `Firebase 연결됨 · 플레이어 ${normalizeList(val.players).length}명 · 버스 ${normalizeList(val.buses).length}대${stopCount}`,
           'ok'
         );
       }, (error) => {
         console.error('[Firebase] /radar 읽기 실패:', error);
         setFirebaseStatus('Firebase 읽기 실패 · 규칙/URL 확인 필요', 'error');
         showToast('Firebase 읽기 실패: 데이터베이스 규칙과 URL을 확인하세요.');
+      });
+
+      // 2) /bell/latest 실시간 동기화
+      db.ref('bell/latest').on('value', (snap) => {
+        const b = snap.val();
+        if (b) {
+          latestBellInfo = Object.assign(latestBellInfo || {}, b);
+          if (b.isHighFloor === true || b.mode === 'high') {
+            for (const bus of buses.values()) {
+              if (b.busId === bus.id || b.busName === bus.name || buses.size === 1) {
+                bus.isHighFloor = true;
+                if (selectedBusId === bus.id) renderReservationSheet();
+              }
+            }
+          }
+        }
+      });
+
+      // 3) /radar/floorOverrides 실시간 동기화 (웹에서 변경한 고상/저상 수동 설정)
+      db.ref('radar/floorOverrides').on('value', (snap) => {
+        const ovs = snap.val() || {};
+        for (const [key, val] of Object.entries(ovs)) {
+          const isHigh = (val === 'high' || val === true);
+          floorOverrides.set(key, isHigh);
+          for (const bus of buses.values()) {
+            const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+            if (busKey === key || bus.id === key || bus.name === key) {
+              bus.isHighFloor = isHigh;
+            }
+          }
+        }
+        if (selectedBusId) renderReservationSheet();
       });
 
     } catch (e) {
@@ -1254,6 +1423,21 @@
       if (floorBadge) {
         floorBadge.textContent = bus.isHighFloor ? '고상' : '저상';
         floorBadge.className = 'bus-floor-badge ' + (bus.isHighFloor ? 'badge-high' : 'badge-low');
+        floorBadge.style.cursor = 'pointer';
+        floorBadge.title = '클릭하여 고상 / 저상 차종 직접 변경';
+        floorBadge.onclick = (e) => {
+          e.stopPropagation();
+          bus.isHighFloor = !bus.isHighFloor;
+          saveFloorOverride(bus.id, bus.isHighFloor);
+          if (bus.name) saveFloorOverride(bus.name, bus.isHighFloor);
+          floorBadge.textContent = bus.isHighFloor ? '고상' : '저상';
+          floorBadge.className = 'bus-floor-badge ' + (bus.isHighFloor ? 'badge-high' : 'badge-low');
+          showToast(`🚌 [${bus.route || bus.name || '버스'}] 차종 변경: ${bus.isHighFloor ? '고상 버스 (오렌지)' : '저상 버스 (초록)'}`);
+          if (db) {
+            const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+            db.ref(`radar/floorOverrides/${busKey}`).set(bus.isHighFloor ? 'high' : 'low').catch(() => {});
+          }
+        };
       }
       if (bellBadge) {
         bellBadge.style.display = bus.isBellRinging ? 'inline-block' : 'none';
@@ -1268,9 +1452,12 @@
       if (!stopListEl) return;
       stopListEl.innerHTML = '';
 
-      const upcoming = bus.upcomingStops || [];
+      let upcoming = bus.upcomingStops || [];
+      if (upcoming.length === 0 && bus.allStops && bus.allStops.length > 0) {
+        upcoming = bus.allStops;
+      }
       if (upcoming.length === 0) {
-        stopListEl.innerHTML = '<div style="color: #94a3b8; font-size: 13px; padding: 18px 0; text-align: center;">남은 정류장이 없습니다 (종점 도착 또는 노선 종료)</div>';
+        stopListEl.innerHTML = '<div style="color: #94a3b8; font-size: 13px; padding: 18px 0; text-align: center;">남은 정류장이 없습니다 (노선 정류장 폴더 확인 필요)</div>';
         return;
       }
 

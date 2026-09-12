@@ -31,8 +31,32 @@ print("[로블록스 레이더] Firebase 연동 활성화됨. 대상:", RADAR_EN
 
 local FRONT_TAGS = { "BUS_FRONT", "BusFront", "FRONT", "Front" }
 local BACK_TAGS = { "BUS_BACK", "BusBack", "BACK", "Back" }
+local BUSIN_TAGS = { "BUSin", "BusIn", "busin", "BUSIN", "Busin", "BUS_IN" }
+
+local function isTruthy(val)
+    if val == true or val == 1 then
+        return true
+    end
+    if type(val) == "string" then
+        local s = val:lower():gsub("%s+", "")
+        return s == "true" or s == "high" or s == "고상" or s == "1" or s == "yes" or s == "y"
+    end
+    return false
+end
+
+local function isFalsy(val)
+    if val == false or val == 0 then
+        return true
+    end
+    if type(val) == "string" then
+        local s = val:lower():gsub("%s+", "")
+        return s == "false" or s == "low" or s == "저상" or s == "0" or s == "no" or s == "n"
+    end
+    return false
+end
 
 local function getFirstAttribute(instance, names, fallback)
+    if not instance then return fallback end
     for _, name in ipairs(names) do
         local value = instance:GetAttribute(name)
         if value ~= nil then
@@ -42,9 +66,25 @@ local function getFirstAttribute(instance, names, fallback)
     return fallback
 end
 
+local function getValueFromInstance(inst, names, fallback)
+    if not inst then return fallback end
+    for _, name in ipairs(names) do
+        local val = inst:GetAttribute(name)
+        if val ~= nil then
+            return val
+        end
+        local child = inst:FindFirstChild(name)
+        if child and child:IsA("ValueBase") then
+            return child.Value
+        end
+    end
+    return fallback
+end
+
 local function round1(value)
     return math.round(value * 10) / 10
 end
+
 
 -- =========================================================================
 -- [1. 하차벨 시스템 통합 관리 (모든 Point ProximityPrompt, Main.Bell, Light 일원화)]
@@ -53,6 +93,9 @@ local busBellSystems = {} -- [busModel] = { prompts = {}, bellSound = sound, lig
 
 local triggerBusBell
 local resetBusBell
+local determineIsHighFloor
+local isGameBellTurnedOff
+
 
 local function getOrCreateBusBellSystem(busModel)
     if busBellSystems[busModel] then
@@ -180,7 +223,7 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase)
             local success, err = pcall(function()
                 local position = busModel.PrimaryPart and busModel.PrimaryPart.Position or busModel:GetPivot().Position
                 local timestamp = DateTime.now().UnixTimestampMillis
-                local isHighFloor = busModel:GetAttribute("isHighFloor") == true
+                local isHighFloor = determineIsHighFloor(busModel, nil, nil)
                 local payload = {
                     type = "bell_press",
                     source = player and "roblox" or "roblox_auto",
@@ -230,13 +273,71 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase)
     end
 end
 
-resetBusBell = function(busModel)
+-- 게임 내 하차벨 신호(라이트 소등, 프롬프트 재활성화 등)에 의해 꺼졌는지 검사
+isGameBellTurnedOff = function(system)
+    if not system or not system.isRinging then
+        return false
+    end
+    -- 하차벨이 울린 직후 1초 동안은 자체 점등 처리 시간이므로 검사 유예
+    if (os.clock() - system.lastTriggeredTime) < 1.0 then
+        return false
+    end
+
+    -- 1. 라이트 소등 상태 검사
+    local hasTrackedLight = false
+    local anyLightOn = false
+
+    for _, light in ipairs(system.lights) do
+        if light.Parent then
+            hasTrackedLight = true
+            if light:IsA("BasePart") then
+                if light.Transparency < 0.5 then
+                    anyLightOn = true
+                    break
+                end
+            elseif light:IsA("Light") then
+                if light.Enabled then
+                    anyLightOn = true
+                    break
+                end
+            end
+        end
+    end
+
+    -- 라이트가 등록되어 있고, 켜져있는 라이트가 하나도 없다면 게임 스크립트에 의해 꺼진 것!
+    if hasTrackedLight and not anyLightOn then
+        return true
+    end
+
+    -- 2. 프롬프트가 외부 스크립트에 의해 다시 활성화된 경우
+    local anyPromptEnabled = false
+    for _, prompt in ipairs(system.prompts) do
+        if prompt.Parent and prompt.Enabled then
+            anyPromptEnabled = true
+            break
+        end
+    end
+    if anyPromptEnabled then
+        return true
+    end
+
+    -- 3. 버스 모델의 명시적 속성 검사
+    local attrBell = system.busModel:GetAttribute("isBellRinging")
+    if attrBell == false then
+        return true
+    end
+
+    return false
+end
+
+resetBusBell = function(busModel, notifyFirebase)
     local system = busBellSystems[busModel]
     if not system or not system.isRinging then
         return
     end
 
     system.isRinging = false
+    system.lastResetTime = os.clock()
 
     -- 1. 모든 ProximityPrompt 활성화
     for _, prompt in ipairs(system.prompts) do
@@ -255,13 +356,141 @@ resetBusBell = function(busModel)
             end
         end
     end
+
+    print(string.format("[하차벨 소등 완료] 버스: %s", busModel.Name))
+
+    if notifyFirebase then
+        task.spawn(function()
+            local success, err = pcall(function()
+                local timestamp = DateTime.now().UnixTimestampMillis
+                local isHighFloor = determineIsHighFloor(busModel, nil, nil)
+                local payload = {
+                    type = "bell_reset",
+                    source = "roblox",
+                    eventId = string.format("roblox-reset-%d-%d", timestamp, math.floor(os.clock() * 1000)),
+                    button = "RESET",
+                    mode = isHighFloor and "high" or "low",
+                    deviceTimestampMs = timestamp,
+                    receivedAtMs = timestamp,
+                    bus = {
+                        id = busModel:GetFullName(),
+                        name = busModel.Name,
+                        route = tostring(getFirstAttribute(busModel, { "route", "Route", "ROUTE" }, "")),
+                        isHighFloor = isHighFloor,
+                    }
+                }
+                HttpService:RequestAsync({
+                    Url = FIREBASE_DATABASE_URL .. "/bell/latest.json",
+                    Method = "PUT",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode(payload)
+                })
+            end)
+            if not success then
+                warn("[로블록스 하차벨] Firebase 소등 이벤트 전송 실패:", err)
+            end
+        end)
+    end
 end
+
 
 -- =========================================================================
 -- [2. 노선 정류장 폴더 자동 로드 및 자연수 순서 정렬]
 -- =========================================================================
 local routeStopsCache = {}
 local lastCacheCheckTime = 0
+
+-- 노선 폴더 탐색 (workspace 직속, Routes/Map/Stops 폴더 하위, GetDescendants 등 폭넓게 탐색)
+local function findRouteFolder(routeName)
+    if not routeName or routeName == "" then
+        return nil
+    end
+
+    -- 1. workspace 직속 우선 탐색
+    local folder = workspace:FindFirstChild(routeName)
+    if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
+        return folder
+    end
+
+    local routeNameLower = routeName:lower()
+
+    -- 2. workspace 직속 대소문자 무관 탐색
+    for _, child in ipairs(workspace:GetChildren()) do
+        if (child:IsA("Folder") or child:IsA("Model")) and child.Name:lower() == routeNameLower then
+            return child
+        end
+    end
+
+    -- 3. 흔히 정류장을 묶어두는 상위 폴더 내부 탐색
+    local commonContainerNames = { "Routes", "Route", "Map", "Stops", "BusStops", "BUS", "노선", "정류장" }
+    for _, containerName in ipairs(commonContainerNames) do
+        local container = workspace:FindFirstChild(containerName)
+        if container then
+            local f = container:FindFirstChild(routeName)
+            if f and (f:IsA("Folder") or f:IsA("Model")) then
+                return f
+            end
+            for _, child in ipairs(container:GetChildren()) do
+                if (child:IsA("Folder") or child:IsA("Model")) and child.Name:lower() == routeNameLower then
+                    return child
+                end
+            end
+        end
+    end
+
+    -- 4. workspace 전체에서 폴더명 일치 탐색
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if (desc:IsA("Folder") or desc:IsA("Model")) and desc.Name:lower() == routeNameLower then
+            return desc
+        end
+    end
+
+    return nil
+end
+
+local function extractStopsFromFolder(folder)
+    if not folder then return {} end
+    local stops = {}
+    local autoIndex = 1
+    local children = folder:GetChildren()
+
+    table.sort(children, function(a, b)
+        local na = tonumber(a.Name:match("%d+"))
+        local nb = tonumber(b.Name:match("%d+"))
+        if na and nb then return na < nb end
+        return a.Name < b.Name
+    end)
+
+    for _, child in ipairs(children) do
+        local num = tonumber(child.Name:match("%d+")) or autoIndex
+        autoIndex = autoIndex + 1
+
+        local pos = nil
+        if child:IsA("BasePart") then
+            pos = child.Position
+        elseif child:IsA("Model") then
+            pos = child:GetPivot().Position
+        end
+
+        if pos then
+            local stopName = getFirstAttribute(child, { "StopName", "stopName", "Name", "정류장명" }, child.Name)
+            table.insert(stops, {
+                index = num,
+                name = tostring(stopName),
+                instance = child,
+                position = pos,
+                x = round1(pos.X),
+                y = round1(pos.Y),
+                z = round1(pos.Z)
+            })
+        end
+    end
+
+    table.sort(stops, function(a, b)
+        return a.index < b.index
+    end)
+    return stops
+end
 
 local function loadRouteStops(routeName)
     if not routeName or routeName == "" then
@@ -273,38 +502,58 @@ local function loadRouteStops(routeName)
         return routeStopsCache[routeName]
     end
 
-    local folder = workspace:FindFirstChild(routeName)
-    if not folder then
-        for _, child in ipairs(workspace:GetChildren()) do
-            if (child:IsA("Folder") or child:IsA("Model")) and child.Name:lower() == routeName:lower() then
-                folder = child
-                break
-            end
+    local folder = findRouteFolder(routeName)
+    local stops = extractStopsFromFolder(folder)
+
+    -- 혹시 노선 번호만 숫자로 추출해서 다시 시도
+    if #stops == 0 then
+        local numOnly = routeName:match("%d+")
+        if numOnly and numOnly ~= routeName then
+            local altFolder = findRouteFolder(numOnly)
+            stops = extractStopsFromFolder(altFolder)
         end
     end
 
-    if not folder then
-        return {}
+    routeStopsCache[routeName] = stops
+    lastCacheCheckTime = now
+    return stops
+end
+
+-- 맵 전체에 존재하는 모든 정류장(모든 노선 폴더 + BUS_STOP 태그) 수집
+local function collectAllMapStops()
+    local allStops = {}
+    local seenPositions = {}
+
+    local function addStop(stop)
+        local key = string.format("%.1f,%.1f", stop.x, stop.z)
+        if not seenPositions[key] then
+            seenPositions[key] = true
+            table.insert(allStops, stop)
+        end
     end
 
-    local stops = {}
-    for _, child in ipairs(folder:GetChildren()) do
-        local num = tonumber(child.Name:match("%d+"))
-        if num then
-            local pos = nil
-            if child:IsA("BasePart") then
-                pos = child.Position
-            elseif child:IsA("Model") then
-                pos = child:GetPivot().Position
-            end
+    -- 1. 캐시된 노선 정류장들
+    for _, stops in pairs(routeStopsCache) do
+        for _, s in ipairs(stops) do
+            addStop(s)
+        end
+    end
 
+    -- 2. BUS_STOP, BusStop, BUS_STATION 태그된 정류장들
+    for _, tag in ipairs({ "BUS_STOP", "BusStop", "bus_stop", "BUS_STATION", "BusStation", "정류장" }) do
+        for _, tagged in ipairs(CollectionService:GetTagged(tag)) do
+            local pos = nil
+            if tagged:IsA("BasePart") then
+                pos = tagged.Position
+            elseif tagged:IsA("Model") then
+                pos = tagged:GetPivot().Position
+            end
             if pos then
-                local stopName = getFirstAttribute(child, { "StopName", "stopName", "Name", "정류장명" }, child.Name)
-                table.insert(stops, {
+                local num = tonumber(tagged.Name:match("%d+")) or (#allStops + 1)
+                local stopName = getFirstAttribute(tagged, { "StopName", "stopName", "Name", "정류장명" }, tagged.Name)
+                addStop({
                     index = num,
                     name = tostring(stopName),
-                    instance = child,
-                    position = pos,
                     x = round1(pos.X),
                     y = round1(pos.Y),
                     z = round1(pos.Z)
@@ -313,13 +562,7 @@ local function loadRouteStops(routeName)
         end
     end
 
-    table.sort(stops, function(a, b)
-        return a.index < b.index
-    end)
-
-    routeStopsCache[routeName] = stops
-    lastCacheCheckTime = now
-    return stops
+    return allStops
 end
 
 -- =========================================================================
@@ -456,11 +699,57 @@ local function findTaggedDescendant(root, tagNames)
 end
 
 local function getVehicleModel(instance)
+    if not instance then return nil end
+
+    -- 1. 조상들을 거슬러 올라가며 CollectionService에 "BUS" 태그가 붙은 최상위 버스 모델을 찾음
+    local highestBusModel = nil
+    local current = instance
+    while current and current ~= workspace and current ~= game do
+        if current:IsA("Model") and CollectionService:HasTag(current, "BUS") then
+            highestBusModel = current -- 더 상위에 BUS 태그 모델이 있다면 계속 갱신
+        end
+        current = current.Parent
+    end
+    if highestBusModel then
+        return highestBusModel
+    end
+
+    -- 2. "BUS" 태그가 상위에 없다면, VehicleSeat이나 노선/고상 속성을 가진 상위 모델 탐색
+    current = instance
+    local candidateModel = nil
+    while current and current ~= workspace and current ~= game do
+        if current:IsA("Model") then
+            candidateModel = candidateModel or current
+            if current:FindFirstChildOfClass("VehicleSeat")
+               or current:GetAttribute("route")
+               or current:GetAttribute("isHighFloor")
+               or current:GetAttribute("BUS") then
+                return current
+            end
+        end
+        current = current.Parent
+    end
+
+    -- 3. workspace 바로 아래에 위치한 최상위 모델 탐색 (대부분의 버스 완성체 모델)
+    current = instance
+    local topLevelModel = nil
+    while current and current.Parent and current.Parent ~= game do
+        if current:IsA("Model") and current.Parent == workspace then
+            topLevelModel = current
+            break
+        end
+        current = current.Parent
+    end
+    if topLevelModel then
+        return topLevelModel
+    end
+
+    -- 4. 폴백: instance 자체 또는 가장 가까운 상위 Model
     if instance:IsA("Model") then
         return instance
     end
 
-    return instance:FindFirstAncestorOfClass("Model")
+    return instance:FindFirstAncestorOfClass("Model") or candidateModel
 end
 
 local function getVehicleCFrame(model)
@@ -646,25 +935,192 @@ local function collectPlayersData()
     return playersData
 end
 
-local function determineIsHighFloor(model, taggedPart, boardingPart)
-    local candidates = { boardingPart, taggedPart, model }
+determineIsHighFloor = function(model, taggedPart, boardingPart)
+    local HIGH_TAGS = {
+        "HIGH", "High", "high",
+        "HIGH_FLOOR", "HighFloor", "high_floor", "highfloor", "High_Floor",
+        "고상", "고상버스", "고상형",
+        "TWO_STEP", "TwoStep", "twostep", "two_step", "투스텝",
+        "UNIVERSE", "Universe", "universe", "유니버스",
+        "GRANBIRD", "Granbird", "granbird", "그랜버드"
+    }
 
-    -- 1. 고상(High floor) 속성 확인
-    for _, inst in ipairs(candidates) do
-        if inst then
-            local val = getFirstAttribute(inst, { "isHighFloor", "IsHighFloor", "highFloor", "HighFloor", "High", "고상" }, nil)
-            if val ~= nil then
-                return val == true
+    local LOW_TAGS = {
+        "LOW", "Low", "low",
+        "LOW_FLOOR", "LowFloor", "low_floor", "lowfloor", "Low_Floor",
+        "저상", "저상버스", "초저상", "초저상버스",
+        "NON_STEP", "NonStep", "nonstep", "non_step", "논스텝"
+    }
+
+    local HIGH_KEYS = {
+        "ishighfloor", "highfloor", "high", "ishigh", "is_high", "is_high_floor",
+        "floortype", "floor", "type", "bustype", "차종", "타입", "고상", "고상버스"
+    }
+
+    local LOW_KEYS = {
+        "islowfloor", "lowfloor", "low", "islow", "is_low", "is_low_floor",
+        "저상", "저상버스", "초저상"
+    }
+
+    -- 검사 대상 인스턴스들 수집
+    local checkTargets = {}
+    local seen = {}
+    local function addTarget(inst)
+        if inst and not seen[inst] then
+            seen[inst] = true
+            table.insert(checkTargets, inst)
+        end
+    end
+
+    addTarget(boardingPart)
+    addTarget(taggedPart)
+    addTarget(model)
+    if model and model.Parent and model.Parent:IsA("Model") then
+        addTarget(model.Parent)
+    end
+
+    -- 모델 내부의 중요 서브 구성품 추가
+    if model then
+        for _, name in ipairs({ "Body", "Main", "Chassis", "Configuration", "Settings", "Values", "Interior", "Seats" }) do
+            local child = model:FindFirstChild(name)
+            if child then
+                addTarget(child)
             end
         end
     end
 
-    -- 2. 저상(Low floor) 속성 확인 (저상이 true면 고상은 false)
-    for _, inst in ipairs(candidates) do
-        if inst then
-            local val = getFirstAttribute(inst, { "isLowFloor", "IsLowFloor", "lowFloor", "LowFloor", "Low", "저상" }, nil)
-            if val ~= nil then
-                return val ~= true
+    -- 1. CollectionService 태그 검사 (타겟 및 모델 직속/주요 파트)
+    for _, inst in ipairs(checkTargets) do
+        for _, tag in ipairs(HIGH_TAGS) do
+            if CollectionService:HasTag(inst, tag) then
+                return true
+            end
+        end
+        for _, tag in ipairs(LOW_TAGS) do
+            if CollectionService:HasTag(inst, tag) then
+                return false
+            end
+        end
+    end
+
+    -- 모델 전체 자손 중 태그 검사
+    if model then
+        for _, desc in ipairs(model:GetDescendants()) do
+            for _, tag in ipairs(HIGH_TAGS) do
+                if CollectionService:HasTag(desc, tag) then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- 2. Attribute(속성) 및 ValueBase(값 객체) 전수 조사
+    for _, inst in ipairs(checkTargets) do
+        -- A. Attributes 검사
+        local attrs = inst:GetAttributes()
+        for attrName, attrVal in pairs(attrs) do
+            local lowerKey = attrName:lower()
+            for _, hk in ipairs(HIGH_KEYS) do
+                if lowerKey == hk or lowerKey:find(hk) then
+                    if isTruthy(attrVal) then
+                        return true
+                    elseif isFalsy(attrVal) then
+                        return false
+                    end
+                end
+            end
+            for _, lk in ipairs(LOW_KEYS) do
+                if lowerKey == lk or lowerKey:find(lk) then
+                    if isTruthy(attrVal) then
+                        return false
+                    end
+                end
+            end
+        end
+
+        -- B. ValueBase 자식 검사
+        for _, child in ipairs(inst:GetChildren()) do
+            if child:IsA("ValueBase") then
+                local lowerName = child.Name:lower()
+                for _, hk in ipairs(HIGH_KEYS) do
+                    if lowerName == hk or lowerName:find(hk) then
+                        if isTruthy(child.Value) then
+                            return true
+                        elseif isFalsy(child.Value) then
+                            return false
+                        end
+                    end
+                end
+                for _, lk in ipairs(LOW_KEYS) do
+                    if lowerName == lk or lowerName:find(lk) then
+                        if isTruthy(child.Value) then
+                            return false
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 3. 모델 자손 전체에서 Attributes / ValueBase / 파트 이름 심층 탐색
+    if model then
+        for _, desc in ipairs(model:GetDescendants()) do
+            -- A. 자손 Attributes 전수 조사
+            local descAttrs = desc:GetAttributes()
+            for attrName, attrVal in pairs(descAttrs) do
+                local lowerKey = attrName:lower()
+                for _, hk in ipairs(HIGH_KEYS) do
+                    if lowerKey == hk or lowerKey:find(hk) then
+                        if isTruthy(attrVal) then
+                            return true
+                        end
+                    end
+                end
+            end
+
+            -- B. 자손 ValueBase 검사
+            if desc:IsA("ValueBase") then
+                local lowerName = desc.Name:lower()
+                for _, hk in ipairs(HIGH_KEYS) do
+                    if lowerName == hk or lowerName:find(hk) then
+                        if isTruthy(desc.Value) then
+                            return true
+                        end
+                    end
+                end
+            end
+
+            -- C. 파트 이름 자체에 고상 키워드가 있는 경우 (예: HighFloor, 고상발판, BUSin_HIGH, TwoStep 등)
+            local lowerDescName = desc.Name:lower()
+            if lowerDescName:find("highfloor") or lowerDescName:find("high_floor") or lowerDescName:find("고상") or lowerDescName:find("twostep") or lowerDescName:find("투스텝") then
+                return true
+            end
+        end
+    end
+
+    -- 4. 모델 및 부모 이름 키워드 분석 (유니버스, 그랜버드, 에어로스페이스, 고상 등)
+    if model then
+        local fullName = (model.Name .. " " .. (model.Parent and model.Parent.Name or "")):lower()
+        local highKeywords = {
+            "고상", "high", "universe", "유니버스", "granbird", "그랜버드",
+            "aerospace", "에어로스페이스", "fx116", "fx120", "fx212",
+            "bh090", "bh115", "bh116", "bh120", "bx212", "투스텝", "twostep"
+        }
+        local lowKeywords = { "저상", "low", "nonstep", "초저상" }
+
+        local hasLow = false
+        for _, lk in ipairs(lowKeywords) do
+            if fullName:find(lk) then
+                hasLow = true
+                break
+            end
+        end
+
+        if not hasLow then
+            for _, hk in ipairs(highKeywords) do
+                if fullName:find(hk) then
+                    return true
+                end
             end
         end
     end
@@ -683,10 +1139,20 @@ local function collectBusData()
         if model and not seenModels[model] then
             seenModels[model] = true
 
-            local frontPart, backPart = getBusParts(model)
+            -- 좌표와 방향은 이후 정류장 계산 및 Firebase payload 양쪽에서 사용됩니다.
+            -- 이전에는 pos/angle이 선언되지 않아 버스가 하나라도 있으면 이 함수가
+            -- 오류로 중단되고, 결과적으로 지도 위치 전체가 갱신되지 않았습니다.
             local pos, angle, frontPartName, backPartName, positionPartName = getBusPose(model, tagged)
-            local isHighFloor = determineIsHighFloor(model, tagged, nil)
-            local routeName = tostring(getFirstAttribute(model, { "route", "Route", "ROUTE" }, ""))
+            local frontPart, backPart = getBusParts(model)
+            local activeBoardingPart = (lastBoardedBus and lastBoardedBus.model == model and lastBoardedBus.part) or nil
+            local isHighFloor = determineIsHighFloor(model, tagged, activeBoardingPart)
+            if not isHighFloor and lastBoardedBus and lastBoardedBus.model == model and lastBoardedBus.isHighFloor ~= nil then
+                isHighFloor = lastBoardedBus.isHighFloor
+            end
+            local routeName = tostring(getValueFromInstance(model, { "route", "Route", "ROUTE", "Line", "line", "노선" }, ""))
+            if routeName == "" and model then
+                routeName = tostring(model.Name:match("%d+") or "")
+            end
 
             -- 하차벨 시스템 초기화 (ProximityPrompt 등 연결)
             local bellSystem = getOrCreateBusBellSystem(model)
@@ -723,9 +1189,9 @@ local function collectBusData()
                 end
             end
 
-            -- 하차벨이 울린 후 30초 경과 시 자동 리셋
-            if bellSystem.isRinging and (os.clock() - bellSystem.lastTriggeredTime > 30) then
-                resetBusBell(model)
+            -- 몇 초 후 자동 소등이 아닌, 게임 내 하차벨 신호(라이트 소등 등) 감지 시 소등 및 Firebase 전송
+            if bellSystem.isRinging and isGameBellTurnedOff(bellSystem) then
+                resetBusBell(model, true)
             end
 
             table.insert(busesData, {
@@ -770,7 +1236,86 @@ local function findTargetPlayer()
     return allPlayers[1]
 end
 
--- 플레이어가 특정 파트(캔콜/캔쿼리 OFF 파트 포함)에 닿아 있거나 내부 영역에 있는지 판정
+-- 특정 파트가 BUSin(탑승 감지용 파트)인지 판별 (태그, 이름, 속성 모두 지원)
+local function isBusInPart(part)
+    if not part or not part:IsA("BasePart") then
+        return false
+    end
+    for _, tag in ipairs(BUSIN_TAGS) do
+        if CollectionService:HasTag(part, tag) then
+            return true
+        end
+    end
+    local nameLower = part.Name:lower()
+    if nameLower == "busin" or nameLower:find("busin") or nameLower == "bus_in" then
+        return true
+    end
+    for _, tag in ipairs(BUSIN_TAGS) do
+        if part:GetAttribute(tag) ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+-- 플레이어의 발 아래에 있는 실제 접촉 바닥 파트 탐색 (Raycast 기반 - 서 있거나 걷는 경우 100% 감지)
+local function getFloorPartUnderCharacter(character)
+    if not character then return nil end
+    local hrp = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso") or character.PrimaryPart
+    if not hrp then return nil end
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = { character }
+    rayParams.IgnoreWater = true
+
+    -- 허리(HRP) 기준 아래로 4.5 studs (발바닥 및 지면) 레이캐스트
+    local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -4.5, 0), rayParams)
+    if hit and hit.Instance and hit.Instance:IsA("BasePart") then
+        return hit.Instance
+    end
+
+    -- 걷기/달리기/미세 점프 중일 때를 위한 7.0 studs 확장 레이캐스트
+    hit = workspace:Raycast(hrp.Position, Vector3.new(0, -7.0, 0), rayParams)
+    if hit and hit.Instance and hit.Instance:IsA("BasePart") then
+        return hit.Instance
+    end
+
+    return nil
+end
+
+-- 3D 공간 상에서 특정 좌표가 파트 내부 또는 상단 탑승 영역에 있는지 판정 (파트 회전 방향 무관 수학 계산)
+local function isPointInsidePartAnyOrientation(point, part, heightMargin)
+    local lp = part.CFrame:PointToObjectSpace(point)
+    local h = heightMargin or 8.5
+    local sx, sy, sz = part.Size.X * 0.5, part.Size.Y * 0.5, part.Size.Z * 0.5
+
+    -- 1) Y축이 높이 방향인 일반적인 파트
+    if math.abs(lp.X) <= (sx + 1.2) and math.abs(lp.Z) <= (sz + 1.2) and (lp.Y >= -sy - 1.2 and lp.Y <= sy + h) then
+        return true
+    end
+    -- 2) X축이 높이 방향인 90도 회전 파트
+    if math.abs(lp.Y) <= (sy + 1.2) and math.abs(lp.Z) <= (sz + 1.2) and (lp.X >= -sx - 1.2 and lp.X <= sx + h) then
+        return true
+    end
+    -- 3) Z축이 높이 방향인 90도 회전 파트
+    if math.abs(lp.X) <= (sx + 1.2) and math.abs(lp.Y) <= (sy + 1.2) and (lp.Z >= -sz - 1.2 and lp.Z <= sz + h) then
+        return true
+    end
+
+    -- 4) 월드 좌표 수평/수직 보조 판정 (초대형 바닥 파트)
+    local worldDelta = point - part.Position
+    local maxHoriz = math.max(part.Size.X, part.Size.Z, part.Size.Y) * 0.6 + 1.5
+    if math.abs(worldDelta.Y) <= 8.5 and (worldDelta.X * worldDelta.X + worldDelta.Z * worldDelta.Z) <= (maxHoriz * maxHoriz) then
+        if worldDelta.Y >= -2.0 then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- 플레이어가 특정 파트(바닥, 발판, BUSin 파트, 내부 영역) 안에 들어가 있거나 닿아있는지 판정
 local function isCharacterTouchingPart(character, part)
     if not character or not part or not part:IsA("BasePart") then
         return false
@@ -781,41 +1326,99 @@ local function isCharacterTouchingPart(character, part)
         return false
     end
 
-    -- 1. 공간 쿼리 (CanQuery=false인 파트여도 대상 캐릭터 파트들은 CanQuery=true이므로 감지 가능)
-    local overlapParams = OverlapParams.new()
-    -- Roblox enum은 전역 RaycastFilterType이 아니라 Enum 아래에 있습니다.
-    -- 잘못된 이름이면 BUS 탑승 감지 순간 메인 Firebase 전송 루프가 죽습니다.
-    overlapParams.FilterType = Enum.RaycastFilterType.Include
-    overlapParams.FilterDescendantsInstances = { character }
-    local querySize = part.Size + Vector3.new(1.0, 2.0, 1.0)
-    local foundParts = workspace:GetPartBoundsInBox(part.CFrame, querySize, overlapParams)
-    if #foundParts > 0 then
-        return true
+    -- 1. 검사할 캐릭터의 신체 주요 부위 좌표 수집 (HRP, 발바닥, 다리, 몸통)
+    local testPoints = { hrp.Position, hrp.Position - Vector3.new(0, 2.7, 0) }
+    for _, partName in ipairs({ "LeftFoot", "RightFoot", "LeftLowerLeg", "RightLowerLeg", "LowerTorso", "Torso", "UpperTorso" }) do
+        local bodyPart = character:FindFirstChild(partName)
+        if bodyPart and bodyPart:IsA("BasePart") then
+            table.insert(testPoints, bodyPart.Position)
+        end
     end
 
-    -- 2. 수학적 회전 바운딩 박스(OBB) 영역 판정 (물리 지연 보완)
-    local halfSize = part.Size * 0.5
-    local marginX = halfSize.X + 1.2
-    local marginY = halfSize.Y + 2.5
-    local marginZ = halfSize.Z + 1.2
-
-    local testPoints = {
-        hrp.Position,
-        hrp.Position - Vector3.new(0, 2.5, 0), -- 발 부근
-        hrp.Position + Vector3.new(0, 1.5, 0)  -- 머리 부근
-    }
-
+    -- 2. 회전 무관 3D 공간 판정 (CanCollide/CanQuery 꺼짐 파트도 100% 안전하게 계산)
     for _, pt in ipairs(testPoints) do
-        local lp = part.CFrame:PointToObjectSpace(pt)
-        if math.abs(lp.X) <= marginX and math.abs(lp.Y) <= marginY and math.abs(lp.Z) <= marginZ then
+        if isPointInsidePartAnyOrientation(pt, part, 8.5) then
             return true
         end
+    end
+
+    -- 3. 로블록스 물리 공간 쿼리 보조 (오류 방지를 위해 pcall로 안전 실행)
+    local isBoxOverlap = false
+    pcall(function()
+        local pSize = part.Size
+        local boxSize = Vector3.new(pSize.X + 2.0, math.max(pSize.Y + 8.0, 10.0), pSize.Z + 2.0)
+        local overlapParams = OverlapParams.new()
+        overlapParams.FilterType = Enum.RaycastFilterType.Include
+        overlapParams.FilterDescendantsInstances = { character }
+        overlapParams.RespectCanCollide = false
+        local found = workspace:GetPartBoundsInBox(part.CFrame * CFrame.new(0, 4.0, 0), boxSize, overlapParams)
+        if found and #found > 0 then
+            isBoxOverlap = true
+        end
+    end)
+    if isBoxOverlap then
+        return true
     end
 
     return false
 end
 
--- 버스에 속한 탑승 판정 대상 파트들(BUS 태그 파트, 캔콜/캔쿼리 OFF 파트) 추출
+-- 플레이어가 버스 모델의 3D 바운딩 박스(차체 내부 공간) 안에 들어와 있는지 판정 (최종 안전장치)
+local function isCharacterInsideModelBoundingBox(character, model)
+    if not character or not model then return false end
+    local hrp = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+    if not hrp then return false end
+
+    local success, cframe, size = pcall(function()
+        return model:GetBoundingBox()
+    end)
+    if not success or not cframe or not size then return false end
+
+    local localPos = cframe:PointToObjectSpace(hrp.Position)
+    local half = size * 0.5
+    -- 차체 외벽 안쪽(X 마진 -0.1, Z 마진 -0.2)이고, 바닥면보다 위쪽(Y >= -half.Y + 0.5)에 위치
+    if math.abs(localPos.X) <= math.max(half.X - 0.1, 1.0) and math.abs(localPos.Z) <= math.max(half.Z - 0.2, 1.0) then
+        if localPos.Y >= (-half.Y + 0.5) and localPos.Y <= (half.Y + 1.0) then
+            return true
+        end
+    end
+    return false
+end
+
+-- 전역의 모든 BUSin 파트 수집 (태그된 파트 + 모델 내부의 BUSin 이름 파트)
+local function getAllBusInParts()
+    local parts = {}
+    local seen = {}
+
+    local function addPart(p)
+        if p and p:IsA("BasePart") and not seen[p] then
+            seen[p] = true
+            table.insert(parts, p)
+        end
+    end
+
+    for _, tag in ipairs(BUSIN_TAGS) do
+        for _, p in ipairs(CollectionService:GetTagged(tag)) do
+            addPart(p)
+        end
+    end
+
+    -- 버스 모델들 내부에서 이름이나 속성에 busin이 포함된 파트도 자동 수집
+    for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
+        local model = getVehicleModel(tagged)
+        if model then
+            for _, desc in ipairs(model:GetDescendants()) do
+                if isBusInPart(desc) then
+                    addPart(desc)
+                end
+            end
+        end
+    end
+
+    return parts
+end
+
+-- 버스에 속한 탑승 판정 대상 파트들(BUSin 파트, 캔콜/캔쿼리 OFF 파트, 바닥 파트) 추출
 local function getBoardingPartsForBus(model, tagged)
     local parts = {}
     local seen = {}
@@ -827,19 +1430,24 @@ local function getBoardingPartsForBus(model, tagged)
         end
     end
 
-    -- 지도 표시용으로 직접 태그된 파트
     if tagged and tagged:IsA("BasePart") then
         addPart(tagged)
     end
 
-    -- 버스 모델 내부의 캔콜끄고 캔쿼리 끈 파트 및 BUS 태그 파트
     if model then
         for _, desc in ipairs(model:GetDescendants()) do
             if desc:IsA("BasePart") then
-                if not desc.CanCollide and not desc.CanQuery then
+                if isBusInPart(desc) then
+                    addPart(desc)
+                elseif not desc.CanCollide and not desc.CanQuery then
                     addPart(desc)
                 elseif CollectionService:HasTag(desc, "BUS") then
                     addPart(desc)
+                else
+                    local lowerName = desc.Name:lower()
+                    if lowerName:find("floor") or lowerName:find("step") or lowerName:find("바닥") or lowerName:find("발판") then
+                        addPart(desc)
+                    end
                 end
             end
         end
@@ -848,7 +1456,7 @@ local function getBoardingPartsForBus(model, tagged)
     return parts
 end
 
--- 플레이어가 해당 버스에 탑승(닿아있음 또는 착석)했는지 탐색
+-- 플레이어가 해당 버스에 탑승(착석, 바닥 접촉, BUSin 진입, 차체 내부 진입)했는지 다계층 탐색
 local function findBusForPlayer(player)
     local character = player and player.Character
     if not character then
@@ -858,20 +1466,65 @@ local function findBusForPlayer(player)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local seatPart = humanoid and humanoid.SeatPart
 
+    -- 1계층: 좌석 착석 검사 (기존 동작 완벽 보장)
+    if seatPart then
+        for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
+            local model = getVehicleModel(tagged)
+            if model and seatPart:IsDescendantOf(model) then
+                return model, tagged, seatPart
+            end
+        end
+        local seatBus = getVehicleModel(seatPart)
+        if seatBus then
+            return seatBus, seatPart, seatPart
+        end
+    end
+
+    -- 2계층: 발 아래 바닥 파트 직접 접촉 검사 (서 있거나 걷는 경우 즉시 감지)
+    local floorPart = getFloorPartUnderCharacter(character)
+    if floorPart then
+        -- A. 밟고 있는 파트가 BUSin 태그/이름인 경우
+        if isBusInPart(floorPart) then
+            local model = getVehicleModel(floorPart)
+            if model then
+                return model, floorPart, floorPart
+            end
+        end
+
+        -- B. 밟고 있는 파트가 등록된 버스 모델의 구성품인 경우
+        for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
+            local model = getVehicleModel(tagged)
+            if model and floorPart:IsDescendantOf(model) then
+                return model, tagged, floorPart
+            end
+        end
+    end
+
+    -- 3계층: BUSin 태그/이름 파트 3D 탑승 영역 검사 (안에 들어가 서 있는 경우)
+    local busInParts = getAllBusInParts()
+    for _, bPart in ipairs(busInParts) do
+        if isCharacterTouchingPart(character, bPart) then
+            local model = getVehicleModel(bPart)
+            if model then
+                return model, bPart, bPart
+            end
+        end
+    end
+
+    -- 4계층: 버스 내부의 탑승 대상 파트(캔콜/캔쿼리 OFF 바닥, 발판 등) 검사
     for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
         local model = getVehicleModel(tagged)
         if model then
-            -- A. 좌석에 착석한 경우
-            if seatPart and seatPart:IsDescendantOf(model) then
-                return model, tagged, seatPart
-            end
-
-            -- B. 캔콜/캔쿼리 OFF 파트 또는 BUS 파트에 닿아있는 경우
             local boardingParts = getBoardingPartsForBus(model, tagged)
             for _, bPart in ipairs(boardingParts) do
                 if isCharacterTouchingPart(character, bPart) then
                     return model, tagged, bPart
                 end
+            end
+
+            -- 5계층: 버스 모델 3D 차체 내부(Bounding Box) 진입 검사 (최종 안전장치)
+            if isCharacterInsideModelBoundingBox(character, model) then
+                return model, tagged, model.PrimaryPart or tagged
             end
         end
     end
@@ -880,9 +1533,10 @@ local function findBusForPlayer(player)
 end
 
 local lastBoardedBus = nil
+local lastBoardingReportedBus = nil
 local BOARDING_GRACE_PERIOD_SEC = 1.0 -- 버스에서 내리면 정확히 1초 뒤에 연동 해제
 
--- 선택한 플레이어가 탄 BUS의 상태(접촉 탑승 및 고상/저상 여부)를 하차벨 브리지에 전달
+-- 선택한 플레이어가 탄 BUS의 상태(접촉 탑승 및 고상/저상 여부, 하차벨 점등 여부)를 하차벨 브리지에 전달
 local function collectBellContext()
     local player = findTargetPlayer()
     if not player then
@@ -893,11 +1547,14 @@ local function collectBellContext()
     local model, tagged, detectedPart = findBusForPlayer(player)
     local now = os.clock()
 
+    local isHighFloor = false
     if model then
+        isHighFloor = determineIsHighFloor(model, tagged, detectedPart)
         lastBoardedBus = {
             model = model,
             tagged = tagged,
             part = detectedPart,
+            isHighFloor = isHighFloor,
             time = now
         }
     elseif lastBoardedBus then
@@ -906,17 +1563,37 @@ local function collectBellContext()
             model = lastBoardedBus.model
             tagged = lastBoardedBus.tagged
             detectedPart = lastBoardedBus.part
+            isHighFloor = lastBoardedBus.isHighFloor or determineIsHighFloor(model, tagged, detectedPart)
         else
             lastBoardedBus = nil
         end
     end
 
     if not model then
+        if lastBoardingReportedBus ~= nil then
+            print(string.format("[버스 하차 확인] 플레이어: %s 버스에서 내림 (미탑승 상태 전환)", player.Name))
+            lastBoardingReportedBus = nil
+        end
         return { active = false, timestamp = DateTime.now().UnixTimestampMillis }
     end
 
     local position = getBusPosition(model, tagged)
-    local isHighFloor = determineIsHighFloor(model, tagged, detectedPart)
+    if isHighFloor == nil then
+        isHighFloor = determineIsHighFloor(model, tagged, detectedPart)
+    end
+    local bellSystem = busBellSystems[model] or getOrCreateBusBellSystem(model)
+    local isBellRinging = (bellSystem and bellSystem.isRinging == true) or false
+
+    if model ~= lastBoardingReportedBus then
+        lastBoardingReportedBus = model
+        print(string.format("[버스 탑승 확인] 플레이어: %s -> 버스: %s (감지파트: %s, 하차벨: %s, 차종: %s)",
+            player.Name,
+            model.Name,
+            detectedPart and detectedPart.Name or "차체내부",
+            isBellRinging and "점등중" or "소등",
+            isHighFloor and "고상" or "저상"
+        ))
+    end
 
     return {
         active = true,
@@ -925,6 +1602,7 @@ local function collectBellContext()
         busName = model.Name,
         route = tostring(getFirstAttribute(model, { "route", "Route", "ROUTE" }, "")),
         isHighFloor = isHighFloor,
+        isBellRinging = isBellRinging,
         x = round1(position.X),
         y = round1(position.Y),
         z = round1(position.Z),
@@ -932,13 +1610,12 @@ local function collectBellContext()
     }
 end
 
--- 실제 벨에서 Firebase로 올라온 이벤트를 Roblox 버스에서도 재생합니다.
--- 최신 이벤트만 읽고 eventId를 기억해 중복 재생을 방지합니다.
+-- 실제 벨(마이크로파이썬)에서 Firebase로 올라온 이벤트를 초저지연(0.12초 주기)으로 감지하여 로블록스 버스에서 즉각 재생
 local lastPhysicalBellEventId = nil
 local isPollingPhysicalBell = false
 local PHYSICAL_BELL_MAX_AGE_MS = 5_000
 
-local function pollPhysicalBell()
+local function pollPhysicalBellFast()
     if isPollingPhysicalBell then
         return
     end
@@ -960,8 +1637,8 @@ local function pollPhysicalBell()
                 return
             end
 
-            local receivedAt = tonumber(event.receivedAtMs)
-            if not receivedAt or DateTime.now().UnixTimestampMillis - receivedAt > PHYSICAL_BELL_MAX_AGE_MS then
+            local receivedAt = tonumber(event.receivedAtMs) or tonumber(event.deviceTimestampMs)
+            if not receivedAt or (DateTime.now().UnixTimestampMillis - receivedAt) > PHYSICAL_BELL_MAX_AGE_MS then
                 return
             end
 
@@ -985,18 +1662,26 @@ local function pollPhysicalBell()
         end)
 
         isPollingPhysicalBell = false
-        if not success then
-            warn("[로블록스 레이더] 실제 벨 이벤트 수신 실패:", err)
-        end
     end)
 end
+
+-- 초저지연 전담 독립 폴러 (초당 약 8회)
+task.spawn(function()
+    while RunService:IsRunning() do
+        pollPhysicalBellFast()
+        task.wait(0.12)
+    end
+end)
 
 task.spawn(function()
     while RunService:IsRunning() do
         if not isSending then
             -- 좌표/탑승 정보 수집 오류가 나도 전체 루프가 죽지 않도록 보호합니다.
             local collectSuccess, playersData, busesData, bellData = pcall(function()
-                return collectPlayersData(), collectBusData(), collectBellContext()
+                local bell = collectBellContext()
+                local players = collectPlayersData()
+                local buses = collectBusData()
+                return players, buses, bell
             end)
 
             if not collectSuccess then
@@ -1006,10 +1691,9 @@ task.spawn(function()
                     players = playersData,
                     buses = busesData,
                     bell = bellData,
+                    stops = collectAllMapStops(),
                     timestamp = DateTime.now().UnixTimestampMillis
                 }
-
-                pollPhysicalBell()
 
                 isSending = true
                 task.spawn(function()

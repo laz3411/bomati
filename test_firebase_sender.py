@@ -78,6 +78,12 @@ try:
             }
         ]
 
+        sample_stops = [
+            {"index": 1, "name": "정류장 1 (본동)", "x": 1073.6, "y": 0.5, "z": 1373.9, "distance": 120.0},
+            {"index": 2, "name": "정류장 2 (시청앞)", "x": 1073.6, "y": 0.5, "z": 758.7, "distance": 450.0},
+            {"index": 3, "name": "정류장 3 (종합운동장)", "x": -500.0, "y": 0.5, "z": 1000.0, "distance": 800.0}
+        ]
+
         buses_payload = [
             {
                 "id": "Workspace.2017 Hyundai New Super Aero City F/L CNG",
@@ -91,13 +97,23 @@ try:
                 "angle": look1,
                 "isBellRinging": False,
                 "timestamp": now_ms,
-                "allStops": [
-                    {"index": 1, "name": "정류장 1", "x": 1073.6, "y": 0.5, "z": 1373.9, "distance": 120.0},
-                    {"index": 2, "name": "정류장 2", "x": 1073.6, "y": 0.5, "z": 758.7, "distance": 450.0}
-                ],
-                "upcomingStops": [
-                    {"index": 2, "name": "정류장 2", "x": 1073.6, "y": 0.5, "z": 758.7, "distance": 450.0}
-                ]
+                "allStops": sample_stops,
+                "upcomingStops": sample_stops[1:]
+            },
+            {
+                "id": "Workspace.2020 Hyundai Universe HighFloor",
+                "name": "2020 현대 유니버스 (고상)",
+                "route": "720",
+                "floorType": "high",
+                "isHighFloor": True,
+                "x": round(x2 - 40, 1),
+                "y": 6.9,
+                "z": round(z2 - 40, 1),
+                "angle": look2,
+                "isBellRinging": False,
+                "timestamp": now_ms,
+                "allStops": sample_stops,
+                "upcomingStops": sample_stops
             }
         ]
 
@@ -105,6 +121,7 @@ try:
             "players": players_payload,
             "buses": buses_payload,
             "bell": {"active": False, "timestamp": now_ms},
+            "stops": sample_stops,
             "timestamp": now_ms
         }
 
