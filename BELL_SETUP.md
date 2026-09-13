@@ -12,6 +12,30 @@
    ```
    *(포트 번호는 장치가 연결된 실제 포트로 지정하세요)*
 
+### 인게임 버스 선택/소환
+
+버스 선택 기능은 기존 Firebase 스크립트와 별도로 다음 두 스크립트를 추가합니다.
+
+1. `ReplicatedStorage` 아래에 `BusModels`라는 **Folder**를 만들고, 소환할 버스 **Model**들을 그 안으로 옮깁니다.
+2. 버스가 소환될 별도 파트는 필요하지 않습니다. 플레이어가 바라보는 수평 방향 앞쪽 24 studs, 약 3 studs 위에 미리보기가 나타납니다.
+3. `bus_spawner_server.lua`를 `ServerScriptService` 아래의 **Script**에 붙여넣습니다.
+4. `bus_spawner_client.lua`를 `StarterPlayer > StarterPlayerScripts` 아래의 **LocalScript**에 붙여넣습니다.
+5. 플레이 중 **B**를 누르면 `BusModels` 안의 목록이 열립니다. 버스를 선택하면 마우스가 가리키는 표면에 윤곽선 미리보기가 나타납니다. 마우스 이동으로 위치를 정하고 **마우스 휠/R**로 15도씩 회전합니다. **좌클릭/T**로 확정 설치하고 **우클릭/B/Esc**로 취소할 수 있습니다. 확정하면 기존에 본인이 소환한 버스가 삭제됩니다.
+
+### 관리자 비행/투명화
+
+1. `admin_fly_server.lua`를 `ServerScriptService` 아래의 **Script**에 붙여넣습니다.
+2. `admin_fly_client.lua`를 `StarterPlayer > StarterPlayerScripts` 아래의 **LocalScript**에 붙여넣습니다.
+3. 기본 관리자는 현재 `laz3411`로 설정되어 있습니다. 다른 계정은 서버 스크립트의 `ADMIN_USER_IDS`에 Roblox UserId를 추가하세요.
+4. 관리자만 게임 안에서 다음 키를 사용할 수 있습니다:
+   - **Shift + F**: 비행 켜기/끄기
+   - **W/A/S/D**: 카메라 방향 비행
+   - **Space / LeftControl**: 상승/하강
+   - **Shift + V**: 다른 플레이어에게 보이는 투명화 켜기/끄기
+   - **비행 중 마우스 휠**: 비행 속도 조절
+
+각 버스 Model은 기존 레이더/하차벨 인식과 함께 사용하려면 내부에 차체 `BasePart`가 하나 이상 있어야 합니다. `BUS` 태그는 소환 서버가 자동으로 붙입니다.
+
 ### 피지컬 벨 ↔ Roblox 양방향 연동
 
 - Roblox의 `ProximityPrompt` 또는 자동 예약 벨이 울리면 Roblox가 Firebase `/bell/latest`에 `source = roblox` 이벤트를 기록하고, PC 브리지가 보드로 `BELL A` 명령을 보냅니다.
@@ -99,6 +123,12 @@
      - 로블록스 인게임의 `Main.Bell` 사운드 및 조명 점등이 **자동으로 작동**합니다.
      - 피지컬 하차벨 기기에도 신호가 전달되어 벨이 울립니다.
      - 웹 화면 상단에 `🔔 [목표 정류장] 접근 중! 하차벨이 자동으로 울렸습니다.` 알림 배너가 뜹니다.
+
+---
+
+## 6. 플레이어별 지정 스폰
+
+`named_spawn_server.lua`를 `ServerScriptService` 아래의 **Script**에 넣고, `Workspace`에 Anchored Part를 만든 뒤 스크립트의 `PLAYER_SPAWN_PARTS` 표에 플레이어 이름과 파트 이름을 연결합니다. 해당 플레이어는 입장하거나 리스폰할 때마다 지정된 파트 위로 이동합니다.
 
 
 
