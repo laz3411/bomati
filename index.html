@@ -761,12 +761,24 @@
     let globalStops = [];
     const knownStops = new Map();
     let boardedBusId = null;
+    // "지금 하차하기"를 누른 직후 Roblox의 다음 상태 수신 전까지도 예약 버튼이
+    // 다시 열리지 않도록, 짧은 로컬 확정 상태를 유지합니다.
+    const immediateBellPendingUntil = new Map();
     // 게임이 갱신하지 않은 Firebase 잔류 데이터는 지도에 절대 표시하지 않습니다.
     // Roblox HTTP 전송이 일시 지연되어도 지도 전체가 깜빡이며 사라지지 않도록
     // 15초까지 마지막 정상 위치를 유지합니다. 플레이어 퇴장은 서버가 /radar를
     // 즉시 삭제하므로 이전 위치가 남는 문제와는 분리됩니다.
     const RADAR_LIVE_MAX_AGE_MS = 15_000;
     let isRadarLive = false;
+
+    function isBusBellEngaged(bus) {
+      if (!bus) return false;
+      if (bus.isBellRinging === true) return true;
+      const until = Number(immediateBellPendingUntil.get(bus.id) || 0);
+      if (until > Date.now()) return true;
+      if (until) immediateBellPendingUntil.delete(bus.id);
+      return false;
+    }
 
 
     function normalizeAngle(angle) {
@@ -860,6 +872,8 @@
       const nextAngle = normalizeAngle(rawBus.angle || 0);
       const isHigh = isBusHighFloor(rawBus);
       const existing = buses.get(id);
+
+      if (rawBus.isBellRinging === true) immediateBellPendingUntil.delete(id);
 
       if (!existing) {
         buses.set(id, {
@@ -1110,6 +1124,8 @@
     }
 
     function drawBusMarkers(ctx) {
+      // 지도상 실제 Roblox 좌표에 그대로 그립니다. 시각적 겹침 방지를 위해
+      // 마커를 임의 좌표로 이동시키지 않습니다.
       for (const bus of buses.values()) {
         const { x, y } = worldToMap(bus.curX, bus.curZ);
         drawBusMarker(ctx, x, y, bus.curAngle, bus);
@@ -1117,11 +1133,10 @@
     }
 
     function drawBusMarker(ctx, px, py, angle, bus) {
-      // 기존 대비 약 1.5배 축소
+      // GitHub 기본 아이콘 비율을 사용하고, 노선 번호는 아이콘 안에만 표시합니다.
       const width = 10;
       const height = 24;
       const routeText = String(bus.route || bus.name || 'BUS').slice(0, 8);
-      const floorText = bus.isHighFloor ? '고상' : '저상';
       const fill = bus.isHighFloor ? '#f97316' : '#16a34a';
       const isSelected = bus.id === selectedBusId;
 
@@ -1129,7 +1144,6 @@
       ctx.translate(px, py);
       ctx.rotate(CONFIG.invertArrowX ? -angle : angle);
 
-      // 선택된 버스일 경우 외곽 하이라이트 링
       if (isSelected) {
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 2.2 / viewScale;
@@ -1137,20 +1151,18 @@
         ctx.stroke();
       }
 
-      // 진행 방향을 길쭉한 차체와 앞쪽 흰 선으로 표현합니다.
       ctx.fillStyle = 'rgba(15, 23, 42, 0.42)';
       ctx.fillRect(-width / 2 + 1.1, -height / 2 + 1.2, width, height);
-
       ctx.fillStyle = fill;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1.1 / viewScale;
       roundRect(ctx, -width / 2, -height / 2, width, height, 1.8);
       ctx.fill();
       ctx.stroke();
-
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(-width / 2 + 1.5, -height / 2 + 1.8, width - 3, 2);
 
+      // 버스 본체 중앙 전광판의 노선 번호
       ctx.font = `${Math.max(5.5 / viewScale, 3.5)}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -1172,23 +1184,14 @@
       ctx.fill();
       ctx.restore();
 
-      ctx.save();
-      ctx.font = `${Math.max(5 / viewScale, 3.5)}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.lineWidth = 1.6 / viewScale;
-      ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.fillStyle = '#ffffff';
-      ctx.strokeText(floorText, px, py + 8 / viewScale);
-      ctx.fillText(floorText, px, py + 8 / viewScale);
-
-      // 하차벨 작동 중일 때 머리 위에 깜빡이는 🔔 표시
-      if (bus.isBellRinging) {
+      if (isBusBellEngaged(bus)) {
+        ctx.save();
         ctx.font = `${Math.max(8 / viewScale, 5)}px -apple-system, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.fillText('🔔', px, py - 16 / viewScale);
+        ctx.restore();
       }
-
-      ctx.restore();
     }
 
     function roundRect(ctx, x, y, width, height, radius) {
@@ -1950,9 +1953,10 @@
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
       const currentRes = currentReservations[busKey];
       const boarding = getBoardingEligibility(bus);
+      const bellEngaged = isBusBellEngaged(bus);
       if (exitNowSection) exitNowSection.hidden = !boarding.isOnBus;
       if (exitNowBtn) {
-        const bellAlreadyOn = bus.isBellRinging === true;
+        const bellAlreadyOn = bellEngaged;
         exitNowBtn.disabled = bellAlreadyOn;
         exitNowBtn.textContent = bellAlreadyOn ? '하차벨 이미 눌림' : '지금 하차하기';
         exitNowBtn.title = bellAlreadyOn ? '이미 하차벨이 작동 중이어서 다시 누를 수 없습니다.' : '';
@@ -2009,6 +2013,8 @@
           <div>
             ${isThisReserved
               ? `<button class="btn-reserved" onclick="cancelReservation('${bus.id}')">🔔 예약됨 (취소)</button>`
+              : bellEngaged
+                ? `<button class="btn-reserve" disabled style="opacity:.5; cursor:not-allowed; background:#475569;">하차벨 작동 중</button>`
               : isCurrentOrNearby
                 ? `<button class="btn-reserve" disabled style="opacity:.5; cursor:not-allowed;">현재 정류장</button>`
                 : !boarding.eligible
@@ -2026,6 +2032,11 @@
       if (!bus) return;
       if (!db) {
         showToast('Firebase 연결 전입니다. 잠시 후 다시 시도하세요.');
+        return;
+      }
+      if (isBusBellEngaged(bus)) {
+        showToast('이미 바로 하차 또는 하차벨이 작동 중이라 하차 예약을 할 수 없습니다.');
+        renderReservationSheet();
         return;
       }
       const boarding = getBoardingEligibility(bus);
@@ -2110,7 +2121,7 @@
         showToast('버스에 탑승한 뒤 사용할 수 있습니다.');
         return;
       }
-      if (bus.isBellRinging === true) {
+      if (isBusBellEngaged(bus)) {
         showToast('이미 하차벨이 작동 중입니다.');
         return;
       }
@@ -2131,12 +2142,18 @@
         bus: { id: bus.id, name: bus.name, route: bus.route, isHighFloor: bus.isHighFloor === true },
         bellPosition: { x: bus.curX, z: bus.curZ }
       };
-      const updates = { 'bell/latest': bellEvent };
-      if (currentReservations[busKey]) updates[`radar/reservations/${busKey}`] = null;
+      // 화면 수신이 잠깐 늦어 currentReservations에 보이지 않아도, 이 버스의
+      // 기존 예약은 무조건 함께 지웁니다. 바로 하차 후 자동 예약이 되살아나는 것을 막습니다.
+      const updates = {
+        'bell/latest': bellEvent,
+        [`radar/reservations/${busKey}`]: null
+      };
 
       db.ref().update(updates).then(() => {
         // 다음 레이더 수신을 기다리는 동안에도 중복 클릭되지 않도록 즉시 화면 상태를 갱신합니다.
         bus.isBellRinging = true;
+        immediateBellPendingUntil.set(bus.id, Date.now() + 8_000);
+        delete currentReservations[busKey];
         showToast('🔔 하차벨을 즉시 작동했습니다.');
         renderReservationSheet();
       }).catch((error) => {
