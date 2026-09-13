@@ -19,18 +19,28 @@ local RESERVATIONS_ENDPOINT = FIREBASE_DATABASE_URL .. "/radar/reservations.json
 -- 지도에 표시할 실제 Roblox 사용자명(Player.Name)입니다. 표시명(DisplayName)이 아닙니다.
 local TARGET_ROBLOX_USER_NAME = "laz3411"
 
--- 전송 주기 (초당 약 3회)
-local SEND_INTERVAL = 0.35
+-- 지도 전송은 초당 2회면 위치 보간에 충분합니다. 물리 벨/예약 조회와 합쳐도
+-- Roblox HttpService 요청 한도를 넘지 않도록 여유를 둡니다.
+local SEND_INTERVAL = 0.50
 
 -- 하차 예약 정류장 도착 시 하차벨 자동 울림 거리 (studs)
 local ARRIVAL_TRIGGER_DISTANCE = 65
 
 local isSending = false
 local radarClearedForAbsentTarget = false
+-- Firebase /radar는 전역 단일 경로입니다. 대상 사용자가 실제로 접속한 서버만
+-- 이 스트림을 쓰거나 삭제할 수 있게 소유권을 기록합니다.
+local targetStreamOwnedByThisServer = false
+local SERVER_SESSION_ID = game.JobId ~= "" and game.JobId or ("studio-" .. tostring(game.PlaceId))
 
 local function isTargetPlayerConnected()
     -- 대상 사용자를 지정하지 않은 개발 환경에서는 기존 전체 전송 동작을 유지합니다.
     if not TARGET_ROBLOX_USER_NAME or TARGET_ROBLOX_USER_NAME == "" then
+        return true
+    end
+    -- 1인 시연 서버는 설정값과 실제 Player.Name이 달라도 그 접속자를
+    -- 시연 대상으로 확정합니다. 여러 명인 서버에서는 아래의 지정 사용자만 허용합니다.
+    if #Players:GetPlayers() == 1 then
         return true
     end
     local target = TARGET_ROBLOX_USER_NAME:lower()
@@ -45,6 +55,8 @@ end
 -- 대상 플레이어가 퇴장하면 지도/예약용 실시간 데이터만 제거합니다.
 -- /bell/events는 디버그 이력으로 남기고, 현재 상태(/bell/latest)는 함께 초기화합니다.
 local function clearLiveRadarData(reason)
+    -- 대상 사용자가 없는 다른 서버가 현재 시연 서버의 지도 데이터를 지우지 않게 합니다.
+    if not targetStreamOwnedByThisServer then return end
     if radarClearedForAbsentTarget then return end
     radarClearedForAbsentTarget = true
     task.spawn(function()
@@ -153,6 +165,24 @@ local function isSpecialBellInstance(instance)
     return false
 end
 
+-- sxnhe_0 원본 스크립트의 BellModel을 찾습니다. B벨은 반드시 이 모델의
+-- Speaker.StopBell1을 사용해야 하므로 버스 전체 검색 결과와 섞지 않습니다.
+local function findSxnheBellRoot(instance, busModel)
+    local current = instance
+    while current and current ~= busModel do
+        local speaker = current:FindFirstChild("Speaker")
+        if speaker
+            and current:FindFirstChild("Bell")
+            and current:FindFirstChild("SBell")
+            and speaker:FindFirstChild("StopBell")
+            and speaker:FindFirstChild("StopBell1") then
+            return current
+        end
+        current = current.Parent
+    end
+    return nil
+end
+
 local function addUnique(list, value)
     if value and not table.find(list, value) then
         table.insert(list, value)
@@ -177,35 +207,51 @@ local function getOrCreateBusBellSystem(busModel)
         normalBellValue = nil,
         specialBellValue = nil,
         doorOpenValue = nil,
+        -- sxnhe_0은 일반/장애인 벨을 서로 전환할 수 있는 원본 구조입니다.
+        hasSxnheBell = false,
         -- 차량별 조명 원래 상태를 보존해, 켠 뒤에도 올바른 방식으로 복구합니다.
         lightStates = {},
         isRinging = false,
         isSpecialRinging = false,
+        -- sxnhe_0에서는 한 정차 주기 동안 일반/장애인 벨을 각각 한 번만 허용합니다.
+        normalBellUsed = false,
+        specialBellUsed = false,
         lastTriggeredTime = 0,
         connectedPrompts = {},
-        connectedClicks = {}
+        connectedClicks = {},
+        promptSxnheRoots = {},
+        clickSxnheRoots = {},
+        sxnheBellRoots = {}
     }
 
-    local function hookPrompt(prompt, isSpecial)
+    local function hookPrompt(prompt, isSpecial, sxnheRoot)
         if not prompt:IsA("ProximityPrompt") or system.connectedPrompts[prompt] then
             return
         end
         system.connectedPrompts[prompt] = true
         table.insert(system.prompts, prompt)
         addUnique(isSpecial and system.specialPrompts or system.normalPrompts, prompt)
+        if sxnheRoot then
+            system.promptSxnheRoots[prompt] = sxnheRoot
+            addUnique(system.sxnheBellRoots, sxnheRoot)
+        end
 
         prompt.Triggered:Connect(function(player)
             local partName = prompt.Parent and prompt.Parent.Name or "Button"
-            triggerBusBell(busModel, player, "PROXIMITY_PROMPT: " .. partName, false, isSpecial)
+            triggerBusBell(busModel, player, "PROXIMITY_PROMPT: " .. partName, false, isSpecial, system.promptSxnheRoots[prompt])
         end)
     end
 
-    local function hookClick(click, isSpecial)
+    local function hookClick(click, isSpecial, sxnheRoot)
         if not click:IsA("ClickDetector") or system.connectedClicks[click] then return end
         system.connectedClicks[click] = true
+        if sxnheRoot then
+            system.clickSxnheRoots[click] = sxnheRoot
+            addUnique(system.sxnheBellRoots, sxnheRoot)
+        end
         click.MouseClick:Connect(function(player)
             local partName = click.Parent and click.Parent.Name or "Button"
-            triggerBusBell(busModel, player, "CLICK_DETECTOR: " .. partName, false, isSpecial)
+            triggerBusBell(busModel, player, "CLICK_DETECTOR: " .. partName, false, isSpecial, system.clickSxnheRoots[click])
         end)
     end
 
@@ -229,25 +275,17 @@ local function getOrCreateBusBellSystem(busModel)
     -- 이름만 Light인 다른 차량은 기존처럼 Transparency 방식이므로, 이름만으로
     -- Neon 방식을 판단하면 두 벨 시스템의 동작이 서로 깨집니다.
     local function isSxnheBellVisual(desc)
-        local current = desc
-        while current and current ~= busModel do
-            local speaker = current:FindFirstChild("Speaker")
-            if speaker
-                and current:FindFirstChild("Bell")
-                and current:FindFirstChild("SBell")
-                and speaker:FindFirstChild("StopBell")
-                and speaker:FindFirstChild("StopBell1") then
-                return true
-            end
-            current = current.Parent
-        end
-        return false
+        return findSxnheBellRoot(desc, busModel) ~= nil
     end
 
     local function registerVisual(desc)
         local lowerName = desc.Name:lower()
         if desc:IsA("Sound") then
-            if lowerName == "stopbell1" or lowerName:find("special") then
+            -- sxnhe_0의 장애인 벨은 Speaker.StopBell1입니다. 다른 이름에
+            -- special이 들어간 효과음이 이를 덮어쓰지 않게 정확한 이름을 우선합니다.
+            if lowerName == "stopbell1" then
+                system.specialBellSound = desc
+            elseif lowerName:find("special") and not system.specialBellSound then
                 system.specialBellSound = desc
             elseif (lowerName == "bell" or lowerName:find("bell")) and (not system.bellSound or desc.Name == "Bell" or lowerName == "stopbell") then
                 system.bellSound = desc
@@ -262,6 +300,9 @@ local function getOrCreateBusBellSystem(busModel)
             end
         elseif desc:IsA("BasePart") or desc:IsA("Light") then
             local sxnheMaterialLight = isSxnheBellVisual(desc)
+            if sxnheMaterialLight then
+                system.hasSxnheBell = true
+            end
             if lowerName == "slight" or lowerName:find("speciallight") then
                 registerLight(system.specialLights, desc, "special", sxnheMaterialLight)
             elseif lowerName == "driver" or lowerName:find("driverlight") then
@@ -293,10 +334,10 @@ local function getOrCreateBusBellSystem(busModel)
     -- 1. 버스 모델 내부의 모든 ProximityPrompt, Main.Bell, Light/Light2 자동 수집 및 이벤트 연결
     for _, desc in ipairs(busModel:GetDescendants()) do
         if desc:IsA("ProximityPrompt") then
-            hookPrompt(desc, isSpecialBellInstance(desc.Parent))
+            hookPrompt(desc, isSpecialBellInstance(desc.Parent), findSxnheBellRoot(desc, busModel))
             registerPromptAssemblyVisuals(desc)
         elseif desc:IsA("ClickDetector") then
-            hookClick(desc, isSpecialBellInstance(desc.Parent))
+            hookClick(desc, isSpecialBellInstance(desc.Parent), findSxnheBellRoot(desc, busModel))
         end
         registerVisual(desc)
     end
@@ -323,10 +364,10 @@ local function getOrCreateBusBellSystem(busModel)
     -- 실시간으로 생성되거나 로드되는 하차벨 및 프롬프트 동적 감지
     busModel.DescendantAdded:Connect(function(desc)
         if desc:IsA("ProximityPrompt") then
-            hookPrompt(desc, isSpecialBellInstance(desc.Parent))
+            hookPrompt(desc, isSpecialBellInstance(desc.Parent), findSxnheBellRoot(desc, busModel))
             registerPromptAssemblyVisuals(desc)
         elseif desc:IsA("ClickDetector") then
-            hookClick(desc, isSpecialBellInstance(desc.Parent))
+            hookClick(desc, isSpecialBellInstance(desc.Parent), findSxnheBellRoot(desc, busModel))
         end
         registerVisual(desc)
     end)
@@ -388,12 +429,18 @@ end
 
 -- suppressFirebase=true인 경우, 물리 벨에서 이미 Firebase에 기록한 이벤트를
 -- Roblox에서 재생만 하고 다시 Firebase로 되쏘지 않아 무한 반복을 막습니다.
-triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isSpecial)
+triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isSpecial, sourceSxnheRoot)
     local system = getOrCreateBusBellSystem(busModel)
     isSpecial = isSpecial == true
-    -- 일반 벨이 켜진 상태에서도 장애인 벨(또는 반대)을 누르면 첨부 스크립트처럼 종류를 전환합니다.
-    if system.isRinging and system.isSpecialRinging == isSpecial then
+    -- 같은 벨은 한 정차 주기 동안 한 번만, sxnhe_0의 반대 종류 벨도 아직
+    -- 누르지 않은 경우에만 한 번 전환할 수 있습니다.
+    if (isSpecial and system.specialBellUsed) or ((not isSpecial) and system.normalBellUsed) then
         return
+    end
+    if isSpecial then
+        system.specialBellUsed = true
+    else
+        system.normalBellUsed = true
     end
     system.isRinging = true
     system.isSpecialRinging = isSpecial
@@ -401,21 +448,37 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isS
 
     print(string.format("[하차벨 작동] 버스: %s, 사유: %s, 트리거: %s", busModel.Name, tostring(triggerReason), player and player.Name or "자동예약"))
 
-    -- 1. 하차벨이 켜져 있는 동안에는 어떤 종류의 하차벨도 다시 누를 수 없어야 합니다.
-    --    sxnhe_0 원본 스크립트는 반대편 입력을 다시 켜지만, 통합 시스템에서는
-    --    중복 벨 이벤트를 막기 위해 모든 ProximityPrompt를 잠급니다.
-    for _, prompt in ipairs(system.prompts) do
-        if prompt.Parent then
-            prompt.Enabled = false
+    -- 1. 같은 종류를 여러 번 누르는 것은 막습니다. 단 sxnhe_0은 원본 설계대로
+    --    일반(A) 후 장애인(B), 또는 B 후 A로 한 번 전환할 수 있어야 합니다.
+    local function applyPromptLock()
+        for _, prompt in ipairs(system.prompts) do
+            if prompt.Parent then
+                prompt.Enabled = false
+            end
+        end
+
+        if system.hasSxnheBell then
+            local switchTargets = nil
+            if isSpecial and not system.normalBellUsed then
+                switchTargets = system.normalPrompts
+            elseif (not isSpecial) and not system.specialBellUsed then
+                switchTargets = system.specialPrompts
+            end
+            if not switchTargets then return end
+            for _, prompt in ipairs(switchTargets) do
+                if prompt.Parent then
+                    prompt.Enabled = true
+                end
+            end
         end
     end
+    applyPromptLock()
+
     -- 같은 Triggered 이벤트에서 원본 스크립트가 Prompt를 다시 켠 경우에도
-    -- 모든 연결 함수가 끝난 직후 재잠금합니다.
+    -- 현재 벨과 반대 종류만 남긴 상태로 다시 적용합니다.
     task.defer(function()
         if system.isRinging then
-            for _, prompt in ipairs(system.prompts) do
-                if prompt.Parent then prompt.Enabled = false end
-            end
+            applyPromptLock()
         end
     end)
 
@@ -425,7 +488,19 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isS
     elseif system.normalBellValue then
         system.normalBellValue.Value = true
     end
-    local sound = (isSpecial and system.specialBellSound) or system.bellSound
+    local sound = system.bellSound
+    if isSpecial then
+        -- 자동 수집 결과와 무관하게, 방금 누른 sxnhe_0 BellModel의
+        -- Speaker.StopBell1만 B벨 소리로 사용합니다.
+        local sxnheRoot = sourceSxnheRoot or system.sxnheBellRoots[1]
+        local speaker = sxnheRoot and sxnheRoot:FindFirstChild("Speaker")
+        local sxnheSpecialSound = speaker and speaker:FindFirstChild("StopBell1")
+        if sxnheSpecialSound and sxnheSpecialSound:IsA("Sound") then
+            sound = sxnheSpecialSound
+        else
+            sound = system.specialBellSound or system.bellSound
+        end
+    end
     if sound and sound.Parent then
         sound:Stop()
         sound.TimePosition = 0
@@ -531,11 +606,17 @@ isGameBellTurnedOff = function(system)
         return true
     end
 
-    -- 2. sxnhe_0 원본 스크립트가 반대편 Prompt를 다시 켜더라도, 이는
-    --    하차벨 해제 신호가 아닙니다. 즉시 잠가 중복 하차벨 입력을 막습니다.
+    -- 2. sxnhe_0은 반대편 Prompt 하나만 켜진 상태가 정상입니다. 그 외 차량은
+    --    Prompt가 다시 켜져도 중복 입력이 되지 않게 즉시 잠급니다.
     for _, prompt in ipairs(system.prompts) do
         if prompt.Parent and prompt.Enabled then
-            prompt.Enabled = false
+            local isSxnheSwitch = system.hasSxnheBell and (
+                (system.isSpecialRinging and not system.normalBellUsed and table.find(system.normalPrompts, prompt))
+                or ((not system.isSpecialRinging) and not system.specialBellUsed and table.find(system.specialPrompts, prompt))
+            )
+            if not isSxnheSwitch then
+                prompt.Enabled = false
+            end
         end
     end
 
@@ -556,6 +637,8 @@ resetBusBell = function(busModel, notifyFirebase)
 
     system.isRinging = false
     system.isSpecialRinging = false
+    system.normalBellUsed = false
+    system.specialBellUsed = false
     system.lastResetTime = os.clock()
 
     -- 1. 모든 ProximityPrompt 활성화
@@ -960,7 +1043,7 @@ local lastReservationPollTime = 0
 
 local function pollReservationsAsync()
     local now = os.clock()
-    if now - lastReservationPollTime < 0.8 then
+    if now - lastReservationPollTime < 1.2 then
         return
     end
     lastReservationPollTime = now
@@ -973,10 +1056,16 @@ local function pollReservationsAsync()
             })
         end)
 
-        if success and response.Success and response.Body and response.Body ~= "null" then
-            local data = HttpService:JSONDecode(response.Body)
-            if typeof(data) == "table" then
-                activeReservations = data
+        if success and response.Success then
+            -- 예약이 모두 취소되어 Firebase가 null을 돌려주면 이전 예약을 메모리에
+            -- 남기지 않습니다. 남은 데이터 때문에 벨이 다시 작동하는 문제를 막습니다.
+            if not response.Body or response.Body == "null" then
+                activeReservations = {}
+            else
+                local data = HttpService:JSONDecode(response.Body)
+                if typeof(data) == "table" then
+                    activeReservations = data
+                end
             end
         end
     end)
@@ -1141,7 +1230,8 @@ local function collectPlayersData()
     local shouldLog = (now - lastLogTime >= 3.0)
 
     for _, player in ipairs(allPlayers) do
-        -- laz3411 계정 우선 매칭 (플레이어가 1명이면 무조건 매칭)
+        -- 1인 시연 서버는 접속자를 전송하고, 여러 명인 서버에서는 지정한
+        -- Player.Name/표시명과 일치하는 사용자만 전송합니다.
         local isTarget = (#allPlayers == 1)
         if not isTarget and TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
             local t = TARGET_ROBLOX_USER_NAME:lower()
@@ -1150,24 +1240,6 @@ local function collectPlayersData()
             end
         elseif not TARGET_ROBLOX_USER_NAME or TARGET_ROBLOX_USER_NAME == "" then
             isTarget = true
-        end
-
-        -- 테스트 서버에 다른 플레이어가 먼저 들어와도 전송이 멈추지 않도록
-        -- 설정한 이름을 찾지 못하면 첫 번째 플레이어를 예비 대상으로 사용합니다.
-        if not isTarget and #allPlayers > 1 then
-            local hasExactTarget = false
-            if TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
-                local targetName = TARGET_ROBLOX_USER_NAME:lower()
-                for _, candidate in ipairs(allPlayers) do
-                    if candidate.Name:lower() == targetName then
-                        hasExactTarget = true
-                        break
-                    end
-                end
-            end
-            if not hasExactTarget and player == allPlayers[1] then
-                isTarget = true
-            end
         end
 
         if isTarget then
@@ -1431,7 +1503,9 @@ local function collectBusData()
 
     for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
         local model = getVehicleModel(tagged)
-        if model and not seenModels[model] then
+        -- ReplicatedStorage의 BusModels는 차량 복제용 원본입니다. 실제 게임 월드의
+        -- 버스가 아니므로 BUS 태그가 있어도 레이더에 전송하지 않습니다.
+        if model and model:IsDescendantOf(workspace) and not seenModels[model] then
             seenModels[model] = true
 
             -- 좌표와 방향은 이후 정류장 계산 및 Firebase payload 양쪽에서 사용됩니다.
@@ -1488,9 +1562,15 @@ local function collectBusData()
                     local referencePos = frontPart and frontPart.Position or pos
                     local distToTarget = (referencePos - targetStop.position).Magnitude
                     if distToTarget <= ARRIVAL_TRIGGER_DISTANCE then
-                        -- 장애인 모드 + 저상버스이면 B(장애인) 벨을, 그 외에는 기존 일반 벨을 사용합니다.
-                        local useAccessibilityBell = reservation.accessibilityMode == true and not isHighFloor
-                        triggerBusBell(model, nil, "AUTO_RESERVATION: " .. targetStop.name, false, useAccessibilityBell)
+                        -- 이미 게임 하차벨이 켜진 차량은 예약 도착으로 다시 울리지 않습니다.
+                        -- 예약 상태만 triggered로 바꿔 앱의 진동/알림은 계속 전달합니다.
+                        if not bellSystem.isRinging then
+                            -- 장애인 모드 + 저상버스이면 B(장애인) 벨을, 그 외에는 기존 일반 벨을 사용합니다.
+                            local useAccessibilityBell = reservation.accessibilityMode == true and not isHighFloor
+                            triggerBusBell(model, nil, "AUTO_RESERVATION: " .. targetStop.name, false, useAccessibilityBell)
+                        else
+                            print("[하차 예약] 기존 하차벨 작동 중 - 게임 벨 재작동 없이 앱 알림만 전송:", targetStop.name)
+                        end
                         reservation.status = "triggered"
                         task.spawn(function()
                             pcall(function()
@@ -1533,7 +1613,37 @@ local function collectBusData()
         end
     end
 
-    return busesData
+    -- 하나의 실제 버스에 BUS 태그가 여러 하위 모델/파트에 붙은 경우, 서로 다른
+    -- 모델로 수집될 수 있습니다. 같은 노선·차종이며 좌표가 4 studs 이내인 경우만
+    -- 중복으로 합칩니다. 고상/저상처럼 차종이 다른 실제 차량은 절대 합치지 않습니다.
+    local uniqueBuses = {}
+    for _, bus in ipairs(busesData) do
+        local duplicate = nil
+        for _, existing in ipairs(uniqueBuses) do
+            local sameRoute = tostring(existing.route or "") == tostring(bus.route or "")
+            local sameFloor = existing.isHighFloor == bus.isHighFloor
+            local distance = math.sqrt((existing.x - bus.x) ^ 2 + (existing.z - bus.z) ^ 2)
+            if sameRoute and sameFloor and distance <= 4 then
+                duplicate = existing
+                break
+            end
+        end
+
+        if duplicate then
+            -- 정류장 정보가 더 풍부한 쪽을 유지합니다.
+            if #(duplicate.allStops or {}) == 0 and #(bus.allStops or {}) > 0 then
+                duplicate.allStops = bus.allStops
+                duplicate.upcomingStops = bus.upcomingStops
+                duplicate.currentStop = bus.currentStop
+            end
+            duplicate.isBellRinging = duplicate.isBellRinging or bus.isBellRinging
+            warn(string.format("[로블록스 레이더] 중복 BUS 태그 병합: %s / %s", duplicate.id, bus.id))
+        else
+            table.insert(uniqueBuses, bus)
+        end
+    end
+
+    return uniqueBuses
 end
 
 local function findTargetPlayer()
@@ -1931,11 +2041,17 @@ end
 local lastPhysicalBellEventId = nil
 local isPollingPhysicalBell = false
 local PHYSICAL_BELL_MAX_AGE_MS = 5_000
+local lastPhysicalBellPollTime = 0
+-- 0.25초면 버튼 체감 지연 없이 약 240회/분입니다. 이전 0.10초(600회/분)는
+-- 지도·예약 요청과 합쳐 HttpService 제한을 초과해 연결이 불안정해질 수 있었습니다.
+local PHYSICAL_BELL_POLL_INTERVAL = 0.25
 
 local function pollPhysicalBellFast()
-    if isPollingPhysicalBell then
+    local now = os.clock()
+    if isPollingPhysicalBell or (now - lastPhysicalBellPollTime) < PHYSICAL_BELL_POLL_INTERVAL then
         return
     end
+    lastPhysicalBellPollTime = now
     isPollingPhysicalBell = true
 
     task.spawn(function()
@@ -1985,11 +2101,11 @@ local function pollPhysicalBellFast()
     end)
 end
 
--- 초저지연 전담 독립 폴러 (초당 약 8회)
+-- Roblox HTTP 요청 한도를 고려한 저지연 전담 폴러 (실제 GET은 0.25초마다)
 task.spawn(function()
     while RunService:IsRunning() do
         pollPhysicalBellFast()
-        task.wait(0.12)
+        task.wait(0.10)
     end
 end)
 
@@ -2005,9 +2121,11 @@ end)
 task.spawn(function()
     while RunService:IsRunning() do
         if not isTargetPlayerConnected() then
-            -- PlayerRemoving 이벤트보다 먼저/나중에 루프가 돌더라도 라이브 데이터를 다시 만들지 않습니다.
+            -- 이 서버가 대상 사용자 데이터를 전송한 적이 있을 때만 삭제합니다.
+            -- 대상이 없는 다른 서버는 현재 시연 서버의 데이터를 건드리지 않습니다.
             clearLiveRadarData("target not connected")
         elseif not isSending then
+            targetStreamOwnedByThisServer = true
             radarClearedForAbsentTarget = false
             -- 좌표/탑승 정보 수집 오류가 나도 전체 루프가 죽지 않도록 보호합니다.
             local collectSuccess, playersData, busesData, bellData = pcall(function()
@@ -2021,6 +2139,10 @@ task.spawn(function()
                 warn("[로블록스 레이더] 데이터 수집 실패:", playersData)
             else
                 local radarData = {
+                    serverSessionId = SERVER_SESSION_ID,
+                    -- 1인 시연 서버에서는 실제 접속자 이름을 기록해 HTML이
+                    -- 설정 이름 불일치 때문에 위치를 숨기지 않게 합니다.
+                    targetUserName = playersData[1] and playersData[1].name or TARGET_ROBLOX_USER_NAME,
                     players = playersData,
                     buses = busesData,
                     bell = bellData,

@@ -284,6 +284,13 @@
       box-shadow: 0 5px 14px rgba(234, 88, 12, .3);
     }
     .btn-exit-now:active { transform: scale(.96); }
+    .btn-exit-now:disabled {
+      background: #475569;
+      color: #cbd5e1;
+      cursor: not-allowed;
+      box-shadow: none;
+      opacity: .82;
+    }
 
     .stop-list-title {
       font-size: 13px;
@@ -564,11 +571,11 @@
           <label class="login-field">비밀번호
             <input id="loginPassword" class="login-input" type="password" inputmode="numeric" autocomplete="current-password" placeholder="비밀번호 입력" required maxlength="32">
           </label>
-          <label class="login-accessibility"><input id="loginAccessibility" type="checkbox"> 이동지원 모드로 로그인</label>
+          <label class="login-accessibility"><input id="loginAccessibility" type="checkbox"> 거동이 불편한 장애인임을 확인합니다 · 장애인 하차벨 기능 사용하기</label>
           <div id="loginError" class="login-error" role="alert"></div>
           <button class="login-submit" type="submit">로그인</button>
         </form>
-        <p class="demo-login-note">해커톤 데모 계정: <b>bomati / 1234</b> 또는 <b>mobility / 1234</b>. 실제 서버 인증·건강정보는 저장하지 않습니다.</p>
+        <p class="demo-login-note">해커톤 데모 계정: <b>bomati / 1234</b> 또는 <b>mobility / 1234</b>. 체크는 시연용 본인 확인이며 실제 장애인 인증·건강정보는 저장하지 않습니다.</p>
       </div>
     </div>
   </div>
@@ -633,7 +640,7 @@
     // ==========================================
     const DEMO_ACCOUNTS = {
       bomati: { password: '1234', name: '김보마', accessibility: false },
-      mobility: { password: '1234', name: '이봄', accessibility: true }
+      mobility: { password: '1234', name: '이봄', accessibility: false }
     };
     let demoProfile = null;
     const demoLoginEl = document.getElementById('demoLogin');
@@ -648,7 +655,7 @@
         demoAccountBtn.style.display = 'block';
         demoAccountBtn.textContent = `${demoProfile.accessibility ? '♿ ' : '👤 '}${demoProfile.name}`;
       }
-      if (accountMenuNameEl) accountMenuNameEl.textContent = `${demoProfile.userId} · ${demoProfile.accessibility ? '이동지원 모드' : '일반 모드'}`;
+      if (accountMenuNameEl) accountMenuNameEl.textContent = `${demoProfile.userId} · ${demoProfile.accessibility ? '장애인 하차벨 기능 사용 가능' : '일반 하차벨'}`;
     }
 
     function openLogin() {
@@ -670,7 +677,12 @@
 
     try {
       const savedSession = JSON.parse(localStorage.getItem('bomati_demo_session') || 'null');
-      if (savedSession && savedSession.userId && typeof savedSession.accessibility === 'boolean') demoProfile = savedSession;
+      if (savedSession && savedSession.userId && typeof savedSession.accessibility === 'boolean') {
+        // 예전 '이동지원 모드' 세션은 장애인 하차벨 인증으로 승계하지 않습니다.
+        demoProfile = Object.assign({}, savedSession, {
+          accessibility: savedSession.disabilityBellVerified === true
+        });
+      }
     } catch (e) {}
     if (demoProfile) renderDemoProfile();
 
@@ -690,7 +702,9 @@
         demoProfile = {
           userId,
           name: account.name,
-          accessibility: accessibility || account.accessibility
+          // 시연용 본인 확인을 체크한 계정만 저상버스의 장애인(B) 하차벨을 사용합니다.
+          accessibility,
+          disabilityBellVerified: accessibility
         };
         try { localStorage.setItem('bomati_demo_session', JSON.stringify(demoProfile)); } catch (e) {}
         if (errorEl) errorEl.textContent = '';
@@ -746,6 +760,13 @@
     const buses = new Map();
     let globalStops = [];
     const knownStops = new Map();
+    let boardedBusId = null;
+    // 게임이 갱신하지 않은 Firebase 잔류 데이터는 지도에 절대 표시하지 않습니다.
+    // Roblox HTTP 전송이 일시 지연되어도 지도 전체가 깜빡이며 사라지지 않도록
+    // 15초까지 마지막 정상 위치를 유지합니다. 플레이어 퇴장은 서버가 /radar를
+    // 즉시 삭제하므로 이전 위치가 남는 문제와는 분리됩니다.
+    const RADAR_LIVE_MAX_AGE_MS = 15_000;
+    let isRadarLive = false;
 
 
     function normalizeAngle(angle) {
@@ -878,7 +899,7 @@
       }
     }
 
-    function replaceBuses(rawBuses) {
+      function replaceBuses(rawBuses) {
       const liveIds = new Set();
       (rawBuses || []).forEach((bus) => {
         const id = String(bus.id || bus.name || `${bus.x},${bus.z}`);
@@ -1298,6 +1319,64 @@
         globalStops = Array.from(knownStops.values());
       }
 
+      // 서버 스크립트가 갱신되기 전이거나 태그가 중복된 경우에도 지도에서는
+      // 동일 차량을 하나만 표시합니다. 노선·차종이 다르면 실제 다른 버스이므로 유지합니다.
+      function dedupeBusPayloads(rawBuses) {
+        const unique = [];
+        for (const bus of rawBuses || []) {
+          // ReplicatedStorage는 버스 복제용 원본 보관함입니다. 실제 도로 위 차량이
+          // 아니므로 좌표가 있어도 지도나 차량 수에 포함하면 안 됩니다.
+          if (String(bus && bus.id || '').toLowerCase().startsWith('replicatedstorage.')) continue;
+          const x = Number(bus && bus.x);
+          const z = Number(bus && bus.z);
+          const isHigh = parseFloorValue(bus && bus.isHighFloor) ?? parseFloorValue(bus && bus.floorType) ?? false;
+          const duplicate = unique.find((existing) => {
+            const sameRoute = String(existing.route || '') === String(bus.route || '');
+            const existingHigh = parseFloorValue(existing.isHighFloor) ?? parseFloorValue(existing.floorType) ?? false;
+            return sameRoute && existingHigh === isHigh
+              && Math.hypot(Number(existing.x) - x, Number(existing.z) - z) <= 4;
+          });
+          if (!duplicate) {
+            unique.push(bus);
+          } else if ((!duplicate.allStops || duplicate.allStops.length === 0) && bus.allStops && bus.allStops.length > 0) {
+            duplicate.allStops = bus.allStops;
+            duplicate.upcomingStops = bus.upcomingStops;
+            duplicate.currentStop = bus.currentStop;
+          }
+        }
+        return unique;
+      }
+
+      function clearGameMapData() {
+        targetPlayer = null;
+        buses.clear();
+        knownStops.clear();
+        globalStops = [];
+        latestBellInfo = null;
+        boardedBusId = null;
+      }
+
+    function hasFreshRadarTimestamp(value) {
+      const timestamp = Number(value && value.timestamp);
+      const age = Date.now() - timestamp;
+      // APK 기기와 Roblox 서버 시계가 약간 다른 경우도 정상 데이터로 인정합니다.
+      return Number.isFinite(timestamp) && age >= -60_000 && age <= RADAR_LIVE_MAX_AGE_MS;
+    }
+
+      function belongsToConfiguredTargetServer(value) {
+        const expected = String(TARGET_ROBLOX_USER_NAME || '').trim().toLowerCase();
+        if (!expected) return true;
+        const declared = String(value && value.targetUserName || '').trim().toLowerCase();
+        if (declared === expected) return true;
+        // Roblox와 같은 1인 시연 서버 호환: 실제 접속자 이름을 targetUserName으로
+        // 기록한 경우에만 허용합니다. 여러 명인 서버 데이터는 계속 차단됩니다.
+        const players = normalizeList(value && value.players);
+        return players.length === 1 && players.some((player) =>
+          String(player && player.name || '').toLowerCase() === declared ||
+          String(player && player.displayName || '').toLowerCase() === declared
+        );
+      }
+
       function updateTargetPlayer(players) {
         const list = normalizeList(players).filter(p =>
           p && typeof p === 'object' &&
@@ -1307,11 +1386,25 @@
 
         if (list.length === 0) {
           targetPlayer = null;
-          return;
+          return false;
         }
 
-        // TARGET_ROBLOX_USER_NAME ("laz3411")과 일치하는 플레이어 우선 탐색
-        let found = list.find(p => p.name && p.name.toLowerCase() === TARGET_ROBLOX_USER_NAME.toLowerCase());
+        // Player.Name과 표시명을 모두 비교합니다. 1인 시연 서버는 Roblox 전송
+        // 스크립트와 동일하게 해당 플레이어를 대상으로 허용합니다.
+        const targetName = String(TARGET_ROBLOX_USER_NAME || '').toLowerCase();
+        let found = list.find(p =>
+          (p.name && String(p.name).toLowerCase() === targetName) ||
+          (p.displayName && String(p.displayName).toLowerCase() === targetName)
+        );
+        if (!found && TARGET_ROBLOX_USER_NAME) {
+          if (list.length === 1) {
+            found = list[0];
+          } else {
+            // 다른 플레이어가 있는 서버의 데이터는 이 사용자 지도에 표시하지 않습니다.
+            targetPlayer = null;
+            return false;
+          }
+        }
         if (!found) {
           found = list[0];
         }
@@ -1349,25 +1442,40 @@
         } else {
           targetPlayer = null;
         }
+        return !!found;
       }
 
       // 1) 통합 radar 노드 구독 (players, buses, bell)
       db.ref('radar').on('value', (snap) => {
         const val = snap.val();
-        if (!val) {
-          targetPlayer = null;
-          replaceBuses([]);
+        // 새 Roblox 스크립트가 보낸 server 대상 필드가 있을 때만 이를 엄격히 확인합니다.
+        // 기존 형식 데이터는 아래의 실제 지정 플레이어 이름 비교로 호환 처리합니다.
+        const hasServerOwnerField = val && val.targetUserName !== undefined && val.targetUserName !== null;
+        if (!val || !hasFreshRadarTimestamp(val) || (hasServerOwnerField && !belongsToConfiguredTargetServer(val))) {
+          isRadarLive = false;
+          clearGameMapData();
+          setFirebaseStatus('게임 접속 대기 중 · 이전 위치 데이터 숨김', '');
           return;
         }
 
         // Roblox 스크립트가 PUT하는 단일 노드만 사용합니다.
         // 오래된 /players 노드와 동시에 읽으면 낡은 좌표가 새 좌표를
         // 덮어쓰는 경쟁 상태가 생길 수 있습니다.
-        updateTargetPlayer(val.players || []);
+        if (!updateTargetPlayer(val.players || [])) {
+          isRadarLive = false;
+          clearGameMapData();
+          setFirebaseStatus('게임 접속 대기 중 · 대상 플레이어 미확인', '');
+          return;
+        }
+        isRadarLive = true;
 
         // 하차벨 및 고상 모드 동기화
         if (val.bell) {
           latestBellInfo = val.bell;
+          // 거리 추정이 아니라 Roblox가 판정한 실제 탑승 버스에서만 즉시 하차를 허용합니다.
+          boardedBusId = val.bell.active === true
+            ? String(val.bell.busId || val.bell.busName || '')
+            : null;
           const isBellHigh = val.bell.isHighFloor === true || val.bell.mode === 'high';
           if (isBellHigh) {
             const rawBuses = normalizeList(val.buses);
@@ -1378,13 +1486,19 @@
               }
             }
           }
+        } else {
+          boardedBusId = null;
         }
 
-        const rawBuses = normalizeList(val.buses).map((bus) => Object.assign({}, bus, {
-          allStops: normalizeStops(bus && bus.allStops),
-          upcomingStops: normalizeStops(bus && bus.upcomingStops)
-        }));
-        replaceBuses(rawBuses);
+        const rawBuses = normalizeList(val.buses)
+          // 각 버스도 서버가 방금 전송한 위치일 때만 표시합니다.
+          .filter((bus) => hasFreshRadarTimestamp(bus))
+          .map((bus) => Object.assign({}, bus, {
+            allStops: normalizeStops(bus && bus.allStops),
+            upcomingStops: normalizeStops(bus && bus.upcomingStops)
+          }));
+        const visibleBuses = dedupeBusPayloads(rawBuses);
+        replaceBuses(visibleBuses);
 
         // 이미 등록된 버스 인스턴스에도 고상 플래그 즉시 갱신
         if (latestBellInfo && (latestBellInfo.isHighFloor === true || latestBellInfo.mode === 'high')) {
@@ -1401,7 +1515,7 @@
         ]);
         const stopCount = (globalStops && globalStops.length > 0) ? ` · 정류장 ${globalStops.length}곳` : '';
         setFirebaseStatus(
-          `Firebase 연결됨 · 플레이어 ${normalizeList(val.players).length}명 · 버스 ${normalizeList(val.buses).length}대${stopCount}`,
+          `Firebase 연결됨 · 플레이어 ${normalizeList(val.players).length}명 · 버스 ${visibleBuses.length}대${stopCount}`,
           'ok'
         );
       }, (error) => {
@@ -1428,7 +1542,9 @@
 
       // 정류장만 별도로 구독해 위치 데이터 PATCH 타이밍과 무관하게 유지합니다.
       db.ref('radar/stops').on('value', (snap) => {
-        rememberStops(normalizeStops(snap.val()));
+        if (isRadarLive) {
+          rememberStops(normalizeStops(snap.val()));
+        }
       });
 
       // 3) /radar/floorOverrides 실시간 동기화 (웹에서 변경한 고상/저상 수동 설정)
@@ -1658,10 +1774,11 @@
     const RESERVATION_MIN_DISTANCE = 65;
     const BOARDING_STOP_RADIUS = 100;
     const BOARDING_WINDOW_STOPS = 2;
-    const BOARDING_DISTANCE = 85;
     const BOARDING_STOP_REACHED_DISTANCE = 140;
     const AUTO_CANCEL_DISTANCE = 260;
     const cancellingReservationKeys = new Set();
+    // 모바일에서는 탭이 연속 전달될 수 있어, 같은 버스의 set 요청이 겹치지 않게 합니다.
+    const reservationSaveInFlight = new Set();
 
     function stopMatches(first, second) {
       if (!first || !second) return false;
@@ -1694,8 +1811,11 @@
     function getBoardingEligibility(bus) {
       if (!bus) return { eligible: false, origin: null, isOnBus: false, reason: '버스 정보를 불러오는 중입니다.' };
       if (!targetPlayer) return { eligible: false, origin: null, isOnBus: false, reason: '현재 위치를 불러오는 중입니다.' };
-      const busDistance = Math.hypot(bus.curX - targetPlayer.curX, bus.curZ - targetPlayer.curZ);
-      if (busDistance <= BOARDING_DISTANCE) return { eligible: true, origin: null, isOnBus: true };
+      // model.Name은 복제 원본과 실제 차량이 동일할 수 있어 탑승 판단에 사용하면
+      // 다른 버스의 "지금 하차하기"가 열릴 수 있습니다. 서버가 보낸 FullName(id)만
+      // 일치할 때 실제 탑승 버스로 인정합니다.
+      const isOnBus = !!boardedBusId && String(bus.id) === boardedBusId;
+      if (isOnBus) return { eligible: true, origin: null, isOnBus: true };
 
       const playerStop = getPlayerBoardingStop();
       const routeStops = (bus.upcomingStops && bus.upcomingStops.length > 0) ? bus.upcomingStops : (bus.allStops || []);
@@ -1831,7 +1951,13 @@
       const currentRes = currentReservations[busKey];
       const boarding = getBoardingEligibility(bus);
       if (exitNowSection) exitNowSection.hidden = !boarding.isOnBus;
-      if (exitNowBtn) exitNowBtn.onclick = () => triggerImmediateExit(bus.id);
+      if (exitNowBtn) {
+        const bellAlreadyOn = bus.isBellRinging === true;
+        exitNowBtn.disabled = bellAlreadyOn;
+        exitNowBtn.textContent = bellAlreadyOn ? '하차벨 이미 눌림' : '지금 하차하기';
+        exitNowBtn.title = bellAlreadyOn ? '이미 하차벨이 작동 중이어서 다시 누를 수 없습니다.' : '';
+        exitNowBtn.onclick = bellAlreadyOn ? null : () => triggerImmediateExit(bus.id);
+      }
 
       if (!stopListEl) return;
       stopListEl.innerHTML = '';
@@ -1925,9 +2051,14 @@
         return;
       }
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
-      // 로그인한 이동지원 이용자는 저상버스 예약 시 자동으로 B(이동지원) 벨을 사용합니다.
+      if (reservationSaveInFlight.has(busKey)) {
+        showToast('하차 예약을 저장하고 있습니다. 잠시만 기다려 주세요.');
+        return;
+      }
+      // 장애인 하차벨 기능 인증 이용자는 저상버스 예약 시 자동으로 B(장애인) 벨을 사용합니다.
       const useAccessibilityBell = !!(demoProfile && demoProfile.accessibility && !bus.isHighFloor);
       requestMobileNotificationPermission();
+      reservationSaveInFlight.add(busKey);
       db.ref('radar/reservations/' + busKey).set({
         busId: bus.id,
         route: bus.route,
@@ -1949,11 +2080,22 @@
         status: 'pending',
         reservedAt: Date.now()
       }).then(() => {
+        // 같은 버스에 이전 예약 알림 이력이 있어도 새 예약의 도착 알림은 다시 받아야 합니다.
+        notifiedReservationKeys.delete(busKey);
         showToast(`🔔 ${stopName} 하차 예약이 완료되었습니다!`);
         renderReservationSheet();
       }).catch((error) => {
         console.error('[Firebase] 하차 예약 저장 실패:', error);
-        showToast('하차 예약 저장에 실패했습니다. Firebase 연결·규칙을 확인하세요.');
+        const detail = String((error && (error.code || error.message)) || 'unknown');
+        if (/permission|denied/i.test(detail)) {
+          showToast('하차 예약 권한이 없습니다. Firebase Database 규칙의 write 권한을 확인하세요.');
+        } else if (/network|offline|disconnected/i.test(detail)) {
+          showToast('인터넷 연결이 끊겨 하차 예약을 저장하지 못했습니다.');
+        } else {
+          showToast(`하차 예약 저장 오류: ${detail.slice(0, 70)}`);
+        }
+      }).finally(() => {
+        reservationSaveInFlight.delete(busKey);
       });
     }
 
@@ -1966,6 +2108,10 @@
       const boarding = getBoardingEligibility(bus);
       if (!boarding.isOnBus) {
         showToast('버스에 탑승한 뒤 사용할 수 있습니다.');
+        return;
+      }
+      if (bus.isBellRinging === true) {
+        showToast('이미 하차벨이 작동 중입니다.');
         return;
       }
 
@@ -1989,6 +2135,8 @@
       if (currentReservations[busKey]) updates[`radar/reservations/${busKey}`] = null;
 
       db.ref().update(updates).then(() => {
+        // 다음 레이더 수신을 기다리는 동안에도 중복 클릭되지 않도록 즉시 화면 상태를 갱신합니다.
+        bus.isBellRinging = true;
         showToast('🔔 하차벨을 즉시 작동했습니다.');
         renderReservationSheet();
       }).catch((error) => {

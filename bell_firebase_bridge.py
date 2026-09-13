@@ -23,6 +23,9 @@ DEFAULT_FIREBASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedata
 MAX_CONTEXT_AGE_MS = 4_000
 REMOTE_BELL_MAX_AGE_MS = 5_000
 MODE_REFRESH_INTERVAL_SEC = 2.0
+# /bell/latest은 하차벨 켜짐/명시적 RESET 전용 고속 채널입니다.
+# 위치 지도 폴링과 분리해 약 20회/초로 처리합니다.
+REMOTE_BELL_POLL_SEC = 0.05
 # Firebase의 짧은 지연/일시 실패를 미탑승으로 오인해 MODE IDLE(전체 리셋)를
 # 보내지 않도록, 마지막으로 확인한 탑승 상태를 이 시간만큼 유지합니다.
 CONTEXT_STALE_GRACE_SEC = 20.0
@@ -93,9 +96,10 @@ def send_mode(device, context):
     print(f"[장치] MODE {mode}")
 
 
-def send_silent_bell(device, context):
-    """올라탔을 때 이미 하차벨이 켜져 있는 상태인 경우: 부저 소리 없이 램프/릴레이만 점등합니다."""
-    command = "SILENT_BELL A"
+def send_silent_bell(device, context, button="A"):
+    """올라탔을 때 이미 하차벨이 켜져 있는 상태인 경우: 종류를 유지해 무음 점등합니다."""
+    button = "B" if str(button).upper() == "B" else "A"
+    command = f"SILENT_BELL {button}"
     write_device_command(device, command)
     print(f"[장치] 이미 하차벨 켜짐 상태 -> 소리 없이 점등 명령 전송: {command}")
 
@@ -187,6 +191,7 @@ def run(port, baud, firebase_url, poll_interval):
     # 있습니다. 게임이 실제로 켜짐을 한 번 확인하기 전의 false는 절대 RESET으로
     # 해석하지 않습니다. 그래야 벨이 랜덤하게 바로 꺼지지 않습니다.
     game_bell_confirmed_on = False
+    last_game_bell_button = "A"
     last_mode_sent_at = 0.0
     last_fresh_context = {"active": False}
     last_fresh_context_at = 0.0
@@ -246,10 +251,15 @@ def run(port, baud, firebase_url, poll_interval):
                     received_at = latest_bell.get("receivedAtMs") or latest_bell.get("deviceTimestampMs")
                     if isinstance(received_at, (int, float)) and (int(time.time() * 1000) - int(received_at) <= REMOTE_BELL_MAX_AGE_MS):
                         source = latest_bell.get("source")
+                        latest_button = "B" if str(latest_bell.get("button") or "").upper() == "B" else "A"
                         event_id = str(
                             latest_bell.get("eventId")
                             or f"{source}-{received_at}-{latest_bell.get('button')}"
                         )
+                        # 물리/원격 이벤트 모두 마지막 벨 종류를 기억합니다. 탑승 중
+                        # 이미 점등된 B벨을 무음 동기화할 때 A로 바뀌는 것을 막습니다.
+                        if str(latest_bell.get("type") or "").lower() != "bell_reset":
+                            last_game_bell_button = latest_button
                         if source != "physical" and event_id != last_remote_event_id:
                             handle_remote_bell_event(device, latest_bell)
                             last_remote_event_id = event_id
@@ -323,7 +333,7 @@ def run(port, baud, firebase_url, poll_interval):
                         # 탑승하는 순간 이미 게임 안에서 하차벨이 켜져 있다면 부저 없이 램프만 켬
                         if just_boarded and is_bell_ringing:
                             time.sleep(0.04)
-                            send_silent_bell(device, ctx)
+                            send_silent_bell(device, ctx, last_game_bell_button)
                             game_bell_confirmed_on = True
                             bell_off_since = None
                             if latest_bell and isinstance(latest_bell, dict):
@@ -352,8 +362,8 @@ def run(port, baud, firebase_url, poll_interval):
                 except Exception:
                     pass
 
-            # 초저지연 폴링 대기 (0.12초)
-            time.sleep(0.12)
+            # 하차벨 켜짐/RESET은 약 0.05초마다 확인합니다.
+            time.sleep(REMOTE_BELL_POLL_SEC)
 
 
 def parse_args():
@@ -361,7 +371,7 @@ def parse_args():
     parser.add_argument("--port", default=os.getenv("BELL_SERIAL_PORT"), help="장치 COM 포트. 예: COM5")
     parser.add_argument("--baud", default=115200, type=int)
     parser.add_argument("--firebase-url", default=DEFAULT_FIREBASE_URL)
-    parser.add_argument("--poll-interval", default=0.35, type=float)
+    parser.add_argument("--poll-interval", default=0.20, type=float)
     args = parser.parse_args()
     if not args.port:
         parser.error("--port COM5 또는 BELL_SERIAL_PORT 환경 변수가 필요합니다.")
