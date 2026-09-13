@@ -33,7 +33,7 @@
       height: 100%;
       height: 100dvh;
       overflow: hidden;
-      background: #0b0f19;
+      background: radial-gradient(circle at 50% 0%, #12355a 0%, #0b1220 42%, #070b12 100%);
     }
 
     #mapCanvas {
@@ -55,7 +55,9 @@
       padding: 7px 11px;
       border: 1px solid rgba(250, 204, 21, 0.35);
       border-radius: 10px;
-      background: rgba(15, 23, 42, 0.86);
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
       color: #fde68a;
       font-size: 11px;
       font-weight: 600;
@@ -154,18 +156,18 @@
       left: 0;
       width: 100%;
       max-height: 70%;
-      background: rgba(15, 23, 42, 0.95);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      border-top: 1.5px solid rgba(255, 255, 255, 0.15);
-      border-top-left-radius: 20px;
-      border-top-right-radius: 20px;
+      background: linear-gradient(160deg, rgba(22, 38, 62, 0.98), rgba(8, 16, 31, 0.98));
+      backdrop-filter: blur(22px);
+      -webkit-backdrop-filter: blur(22px);
+      border-top: 1px solid rgba(125, 211, 252, 0.35);
+      border-top-left-radius: 26px;
+      border-top-right-radius: 26px;
       z-index: 30;
       display: flex;
       flex-direction: column;
       transform: translateY(100%);
       transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-      box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.55), 0 -1px 0 rgba(255,255,255,.08);
       padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
     }
 
@@ -178,7 +180,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
     }
 
     .sheet-title-group {
@@ -255,6 +257,34 @@
       font-weight: 600;
     }
 
+    .exit-now-section {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 2px 0 13px;
+      padding: 12px;
+      border: 1px solid rgba(251, 146, 60, .45);
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(154, 52, 18, .38), rgba(124, 45, 18, .18));
+    }
+    .exit-now-title { color: #ffedd5; font-size: 13px; font-weight: 800; }
+    .exit-now-copy { margin-top: 3px; color: #fed7aa; font-size: 11px; line-height: 1.35; }
+    .btn-exit-now {
+      flex: 0 0 auto;
+      min-height: 40px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 5px 14px rgba(234, 88, 12, .3);
+    }
+    .btn-exit-now:active { transform: scale(.96); }
+
     .stop-list-title {
       font-size: 13px;
       font-weight: 700;
@@ -268,14 +298,14 @@
       justify-content: space-between;
       padding: 10px 12px;
       margin-bottom: 7px;
-      background: rgba(30, 41, 59, 0.65);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      transition: background 0.2s;
+      background: rgba(30, 48, 76, 0.64);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 14px;
+      transition: transform 0.18s, background 0.2s, border-color .2s;
     }
     .stop-item.reserved {
-      background: rgba(2, 132, 199, 0.2);
-      border-color: #38bdf8;
+      background: rgba(14, 116, 144, 0.3);
+      border-color: #67e8f9;
     }
 
     .stop-left {
@@ -313,7 +343,7 @@
       padding: 6px 14px;
       border-radius: 8px;
       border: none;
-      background: #0284c7;
+      background: linear-gradient(135deg, #0ea5e9, #2563eb);
       color: #fff;
       font-size: 12px;
       font-weight: 600;
@@ -362,16 +392,18 @@
       top: calc(16px + env(safe-area-inset-top, 0px));
       left: 50%;
       transform: translateX(-50%) translateY(-150%);
-      background: linear-gradient(135deg, #e11d48, #be123c);
-      border: 1.5px solid #fda4af;
-      border-radius: 14px;
-      padding: 12px 20px;
+      width: min(calc(100% - 28px), 460px);
+      background: linear-gradient(135deg, #f43f5e, #be123c 58%, #881337);
+      border: 1px solid rgba(255, 228, 230, .8);
+      border-radius: 20px;
+      padding: 19px 22px;
       color: #fff;
-      font-size: 14px;
-      font-weight: 700;
-      text-align: center;
+      font-size: 16px;
+      font-weight: 800;
+      line-height: 1.55;
+      text-align: left;
       z-index: 50;
-      box-shadow: 0 8px 25px rgba(225, 29, 72, 0.5);
+      box-shadow: 0 14px 38px rgba(136, 19, 55, 0.55);
       transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
       white-space: pre-line;
       pointer-events: none;
@@ -474,7 +506,7 @@
     <div id="nearbyBusPill" class="nearby-bus-pill" style="display: none;"></div>
 
     <!-- 하차벨 자동 알림 배너 -->
-    <div id="bellAlertBanner" class="bell-alert-banner"></div>
+    <div id="bellAlertBanner" class="bell-alert-banner" role="alert" aria-live="assertive"></div>
 
     <!-- 우측 하단 컨트롤 -->
     <div class="controls-fab">
@@ -503,6 +535,13 @@
       <div class="sheet-body">
         <div class="current-stop-info">
           현재 위치: <span id="sheetCurrentStop" class="current-stop-name">운행 중</span>
+        </div>
+        <div id="exitNowSection" class="exit-now-section" hidden>
+          <div>
+            <div class="exit-now-title">다음 정류장에서 바로 하차</div>
+            <div class="exit-now-copy">기존 예약은 취소되고 하차벨이 즉시 작동합니다.</div>
+          </div>
+          <button id="exitNowBtn" class="btn-exit-now" type="button">지금 하차하기</button>
         </div>
         <div class="stop-list-title">다음 하차 가능 정류장 (남은 정류장 목록)</div>
         <div id="sheetStopList"></div>
@@ -1617,6 +1656,107 @@
     let bellAlertTimer = null;
     // Roblox 자동 하차벨 반경과 같게 유지합니다.
     const RESERVATION_MIN_DISTANCE = 65;
+    const BOARDING_STOP_RADIUS = 100;
+    const BOARDING_WINDOW_STOPS = 2;
+    const BOARDING_DISTANCE = 85;
+    const BOARDING_STOP_REACHED_DISTANCE = 140;
+    const AUTO_CANCEL_DISTANCE = 260;
+    const cancellingReservationKeys = new Set();
+
+    function stopMatches(first, second) {
+      if (!first || !second) return false;
+      const firstId = first.stopId ?? first.stopID ?? first.stationId ?? first.stationID;
+      const secondId = second.stopId ?? second.stopID ?? second.stationId ?? second.stationID;
+      if (firstId !== undefined && firstId !== null && String(firstId) !== ''
+        && secondId !== undefined && secondId !== null && String(secondId) !== '') {
+        return String(firstId) === String(secondId);
+      }
+      if (Number.isFinite(Number(first.x)) && Number.isFinite(Number(first.z))
+        && Number.isFinite(Number(second.x)) && Number.isFinite(Number(second.z))) {
+        return Math.hypot(Number(first.x) - Number(second.x), Number(first.z) - Number(second.z)) <= 35;
+      }
+      return Number(first.index) === Number(second.index);
+    }
+
+    function getPlayerBoardingStop() {
+      if (!targetPlayer) return null;
+      const candidates = [...globalStops];
+      for (const bus of buses.values()) candidates.push(...(bus.allStops || []), ...(bus.upcomingStops || []));
+      let nearest = null;
+      for (const stop of candidates) {
+        if (!stop || !Number.isFinite(Number(stop.x)) || !Number.isFinite(Number(stop.z))) continue;
+        const distance = Math.hypot(Number(stop.x) - targetPlayer.curX, Number(stop.z) - targetPlayer.curZ);
+        if (!nearest || distance < nearest.distance) nearest = { stop, distance };
+      }
+      return nearest && nearest.distance <= BOARDING_STOP_RADIUS ? nearest : null;
+    }
+
+    function getBoardingEligibility(bus) {
+      if (!bus) return { eligible: false, origin: null, isOnBus: false, reason: '버스 정보를 불러오는 중입니다.' };
+      if (!targetPlayer) return { eligible: false, origin: null, isOnBus: false, reason: '현재 위치를 불러오는 중입니다.' };
+      const busDistance = Math.hypot(bus.curX - targetPlayer.curX, bus.curZ - targetPlayer.curZ);
+      if (busDistance <= BOARDING_DISTANCE) return { eligible: true, origin: null, isOnBus: true };
+
+      const playerStop = getPlayerBoardingStop();
+      const routeStops = (bus.upcomingStops && bus.upcomingStops.length > 0) ? bus.upcomingStops : (bus.allStops || []);
+      // 버스에 타지 않은 상태라면 반드시 정류장 가까이에서만 미리 예약할 수 있습니다.
+      if (!playerStop) {
+        return { eligible: false, origin: null, isOnBus: false, reason: '정류장 가까이에서만 미리 하차 예약할 수 있습니다.' };
+      }
+      // 노선 진행 정보가 아직 로딩되지 않은 경우에는 정류장 근처라는 조건만 적용합니다.
+      if (routeStops.length === 0) return { eligible: true, origin: playerStop.stop, isOnBus: false };
+
+      const remainingStops = routeStops.findIndex((stop) => stopMatches(stop, playerStop.stop));
+      if (remainingStops < 0) return { eligible: false, origin: playerStop.stop, isOnBus: false, reason: '내 정류장을 지나는 버스가 아닙니다.' };
+      if (remainingStops > BOARDING_WINDOW_STOPS) {
+        return {
+          eligible: false,
+          origin: playerStop.stop,
+          isOnBus: false,
+          reason: `승차 정류장 ${remainingStops}정거장 전입니다. 2정거장 전부터 예약할 수 있습니다.`
+        };
+      }
+      return { eligible: true, origin: playerStop.stop, isOnBus: false };
+    }
+
+    function findBusForReservation(key, reservation) {
+      for (const bus of buses.values()) {
+        const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+        if (busKey === key || bus.id === reservation.busId) return bus;
+      }
+      return null;
+    }
+
+    function monitorUnboardedReservations() {
+      if (!db || !targetPlayer) return;
+      for (const [key, reservation] of Object.entries(currentReservations)) {
+        if (!reservation || reservation.status !== 'pending' || reservation.awaitingBoarding !== true || cancellingReservationKeys.has(key)) continue;
+        const bus = findBusForReservation(key, reservation);
+        if (!bus) continue;
+        const playerToBus = Math.hypot(bus.curX - targetPlayer.curX, bus.curZ - targetPlayer.curZ);
+        if (playerToBus <= BOARDING_DISTANCE) {
+          db.ref(`radar/reservations/${key}`).update({ awaitingBoarding: false, boardedAt: Date.now() }).catch(() => {});
+          continue;
+        }
+        const originX = Number(reservation.originStopX);
+        const originZ = Number(reservation.originStopZ);
+        if (!Number.isFinite(originX) || !Number.isFinite(originZ)) continue;
+        const busFromOrigin = Math.hypot(bus.curX - originX, bus.curZ - originZ);
+        // 예약 직후 버스가 아직 두 정거장 전이라 멀리 있는 경우는 취소하지 않습니다.
+        // 먼저 승차 정류장에 접근한 것이 확인된 뒤 다시 멀어졌을 때만 미탑승 예약을 취소합니다.
+        if (busFromOrigin <= BOARDING_STOP_REACHED_DISTANCE && reservation.boardingWindowReached !== true) {
+          db.ref(`radar/reservations/${key}`).update({ boardingWindowReached: true }).catch(() => {});
+          continue;
+        }
+        if (reservation.boardingWindowReached === true && busFromOrigin >= AUTO_CANCEL_DISTANCE) {
+          cancellingReservationKeys.add(key);
+          db.ref(`radar/reservations/${key}`).remove().then(() => {
+            showToast('탑승하지 않아 하차 예약이 자동 취소되었습니다.');
+          }).catch(() => {}).finally(() => cancellingReservationKeys.delete(key));
+        }
+      }
+    }
+    setInterval(monitorUnboardedReservations, 1000);
 
     try {
       if (!db) throw new Error('Firebase database is not initialized');
@@ -1657,6 +1797,8 @@
       const bellBadge = document.getElementById('sheetBellBadge');
       const currentStopEl = document.getElementById('sheetCurrentStop');
       const stopListEl = document.getElementById('sheetStopList');
+      const exitNowSection = document.getElementById('exitNowSection');
+      const exitNowBtn = document.getElementById('exitNowBtn');
 
       if (routeBadge) routeBadge.textContent = bus.route || bus.name || 'BUS';
       if (floorBadge) {
@@ -1687,6 +1829,9 @@
 
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
       const currentRes = currentReservations[busKey];
+      const boarding = getBoardingEligibility(bus);
+      if (exitNowSection) exitNowSection.hidden = !boarding.isOnBus;
+      if (exitNowBtn) exitNowBtn.onclick = () => triggerImmediateExit(bus.id);
 
       if (!stopListEl) return;
       stopListEl.innerHTML = '';
@@ -1717,14 +1862,7 @@
 
       upcoming.forEach((stop) => {
         const hasStopId = stop.stopId !== undefined && stop.stopId !== null && String(stop.stopId) !== '';
-        const sameStop = (a, b) => {
-          if (!a || !b) return false;
-          if (a.stopId !== undefined && a.stopId !== null && b.stopId !== undefined && b.stopId !== null) {
-            return String(a.stopId) === String(b.stopId);
-          }
-          return Number(a.index) === Number(b.index);
-        };
-        const isCurrentOrNearby = sameStop(stop, bus.currentStop)
+        const isCurrentOrNearby = stopMatches(stop, bus.currentStop)
           || (Number.isFinite(Number(stop.distance)) && Number(stop.distance) <= RESERVATION_MIN_DISTANCE);
         const isThisReserved = currentRes && (
           hasStopId && currentRes.targetStopId !== undefined && currentRes.targetStopId !== null
@@ -1739,7 +1877,7 @@
             <div class="stop-index-circle">${stop.index}</div>
             <div>
               <div class="stop-name">${stop.name || ('정류장 ' + stop.index)}</div>
-              <div class="stop-dist">${isCurrentOrNearby ? '현재 정류장 또는 매우 가까움 · 예약 불가' : (Number.isFinite(Number(stop.distance)) ? Math.round(stop.distance) + 'm 남음' : '')}</div>
+              <div class="stop-dist">${isCurrentOrNearby ? '현재 정류장 또는 매우 가까움 · 예약 불가' : (!boarding.eligible ? boarding.reason : (Number.isFinite(Number(stop.distance)) ? Math.round(stop.distance) + 'm 남음' : ''))}</div>
             </div>
           </div>
           <div>
@@ -1747,7 +1885,9 @@
               ? `<button class="btn-reserved" onclick="cancelReservation('${bus.id}')">🔔 예약됨 (취소)</button>`
               : isCurrentOrNearby
                 ? `<button class="btn-reserve" disabled style="opacity:.5; cursor:not-allowed;">현재 정류장</button>`
-              : `<button class="btn-reserve" onclick="reserveStop('${bus.id}', ${Number(stop.index)}, '${String(stop.stopId || '').replace(/'/g, "\\'")}', '${(stop.name || ('정류장 ' + stop.index)).replace(/'/g, "\\'")}')">하차 예약</button>`
+                : !boarding.eligible
+                  ? `<button class="btn-reserve" disabled style="opacity:.5; cursor:not-allowed;">승차 대기</button>`
+                : `<button class="btn-reserve" onclick="reserveStop('${bus.id}', ${Number(stop.index)}, '${String(stop.stopId || '').replace(/'/g, "\\'")}', '${(stop.name || ('정류장 ' + stop.index)).replace(/'/g, "\\'")}')">하차 예약</button>`
             }
           </div>
         `;
@@ -1760,6 +1900,11 @@
       if (!bus) return;
       if (!db) {
         showToast('Firebase 연결 전입니다. 잠시 후 다시 시도하세요.');
+        return;
+      }
+      const boarding = getBoardingEligibility(bus);
+      if (!boarding.eligible) {
+        showToast(boarding.reason || '승차 정류장 2정거장 전부터 예약할 수 있습니다.');
         return;
       }
       const allStops = [...(bus.upcomingStops || []), ...(bus.allStops || []), ...globalStops];
@@ -1782,6 +1927,7 @@
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
       // 로그인한 이동지원 이용자는 저상버스 예약 시 자동으로 B(이동지원) 벨을 사용합니다.
       const useAccessibilityBell = !!(demoProfile && demoProfile.accessibility && !bus.isHighFloor);
+      requestMobileNotificationPermission();
       db.ref('radar/reservations/' + busKey).set({
         busId: bus.id,
         route: bus.route,
@@ -1792,6 +1938,13 @@
         targetStopX: selectedStop ? Number(selectedStop.x) : null,
         targetStopY: selectedStop && Number.isFinite(Number(selectedStop.y)) ? Number(selectedStop.y) : null,
         targetStopZ: selectedStop ? Number(selectedStop.z) : null,
+        // 정류장에서 버스를 기다리며 미리 예약한 경우만 탑승 여부를 추적합니다.
+        awaitingBoarding: !boarding.isOnBus && !!boarding.origin,
+        boardingWindowReached: false,
+        originStopId: boarding.origin ? (boarding.origin.stopId ?? boarding.origin.stopID ?? boarding.origin.stationId ?? null) : null,
+        originStopName: boarding.origin ? (boarding.origin.name || null) : null,
+        originStopX: boarding.origin ? Number(boarding.origin.x) : null,
+        originStopZ: boarding.origin ? Number(boarding.origin.z) : null,
         accessibilityMode: useAccessibilityBell,
         status: 'pending',
         reservedAt: Date.now()
@@ -1801,6 +1954,46 @@
       }).catch((error) => {
         console.error('[Firebase] 하차 예약 저장 실패:', error);
         showToast('하차 예약 저장에 실패했습니다. Firebase 연결·규칙을 확인하세요.');
+      });
+    }
+
+    function triggerImmediateExit(busId) {
+      const bus = buses.get(busId);
+      if (!bus || !db) {
+        showToast('버스 또는 Firebase 연결을 확인할 수 없습니다.');
+        return;
+      }
+      const boarding = getBoardingEligibility(bus);
+      if (!boarding.isOnBus) {
+        showToast('버스에 탑승한 뒤 사용할 수 있습니다.');
+        return;
+      }
+
+      const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      const useAccessibilityBell = !!(demoProfile && demoProfile.accessibility && !bus.isHighFloor);
+      const timestamp = Date.now();
+      const bellEvent = {
+        type: 'bell_press',
+        source: 'web_manual',
+        eventId: `web-manual-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+        button: useAccessibilityBell ? 'B' : 'A',
+        mode: bus.isHighFloor ? 'high' : 'low',
+        triggerReason: 'WEB_IMMEDIATE_EXIT',
+        playerName: targetPlayer ? targetPlayer.name : 'WEB',
+        deviceTimestampMs: timestamp,
+        receivedAtMs: timestamp,
+        bus: { id: bus.id, name: bus.name, route: bus.route, isHighFloor: bus.isHighFloor === true },
+        bellPosition: { x: bus.curX, z: bus.curZ }
+      };
+      const updates = { 'bell/latest': bellEvent };
+      if (currentReservations[busKey]) updates[`radar/reservations/${busKey}`] = null;
+
+      db.ref().update(updates).then(() => {
+        showToast('🔔 하차벨을 즉시 작동했습니다.');
+        renderReservationSheet();
+      }).catch((error) => {
+        console.error('[Firebase] 즉시 하차벨 전송 실패:', error);
+        showToast('하차벨 전송에 실패했습니다. Firebase 연결·규칙을 확인하세요.');
       });
     }
 
@@ -1816,6 +2009,29 @@
       });
       showToast('하차 예약을 취소했습니다.');
       renderReservationSheet();
+    }
+
+    function requestMobileNotificationPermission() {
+      if (!('Notification' in window) || Notification.permission !== 'default') return;
+      // 예약 버튼 탭이라는 사용자 제스처 안에서만 권한 요청이 가능합니다.
+      Notification.requestPermission().catch(() => {});
+    }
+
+    function notifyMobileBell(stopName) {
+      const message = `하차벨이 울렸습니다. ${stopName || '예약 정류장'}에서 하차하세요.`;
+      if (navigator.vibrate) navigator.vibrate([320, 110, 320, 110, 520]);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification('🔔 BOMATI 하차 알림', {
+            body: message,
+            tag: 'bomati-stop-alert',
+            renotify: true,
+            requireInteraction: true
+          });
+        } catch (_) {
+          // APK WebView처럼 브라우저 알림 API가 없는 환경은 화면 배너/진동으로 계속 안내합니다.
+        }
+      }
     }
 
     function playWebBellChime() {
@@ -1857,7 +2073,7 @@
       clearTimeout(bellAlertTimer);
       bellAlertTimer = setTimeout(() => {
         banner.classList.remove('show');
-      }, 4500);
+      }, 9000);
     }
 
     const notifiedReservationKeys = new Set();
@@ -1866,7 +2082,7 @@
         if (res && res.status === 'triggered' && !notifiedReservationKeys.has(key)) {
           notifiedReservationKeys.add(key);
           playWebBellChime();
-          if (navigator.vibrate) navigator.vibrate([250, 150, 250]);
+          notifyMobileBell(res.targetStopName || '예약 정류장');
           showBellAlert(`🔔 하차벨 자동 작동!\n이번 정류장 [${res.targetStopName || '예약 정류장'}]에서 하차하세요.`);
         }
       }

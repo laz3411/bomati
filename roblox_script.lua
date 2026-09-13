@@ -177,6 +177,8 @@ local function getOrCreateBusBellSystem(busModel)
         normalBellValue = nil,
         specialBellValue = nil,
         doorOpenValue = nil,
+        -- 차량별 조명 원래 상태를 보존해, 켠 뒤에도 올바른 방식으로 복구합니다.
+        lightStates = {},
         isRinging = false,
         isSpecialRinging = false,
         lastTriggeredTime = 0,
@@ -207,6 +209,41 @@ local function getOrCreateBusBellSystem(busModel)
         end)
     end
 
+    local function registerLight(list, desc, role, usesMaterialSignal)
+        addUnique(list, desc)
+        if not system.lightStates[desc] then
+            local state = { role = role, usesMaterialSignal = usesMaterialSignal == true }
+            if desc:IsA("BasePart") then
+                state.transparency = desc.Transparency
+                state.material = desc.Material
+                state.color = desc.Color
+            elseif desc:IsA("Light") then
+                state.enabled = desc.Enabled
+            end
+            system.lightStates[desc] = state
+        end
+    end
+
+    -- sxnhe_0 원본 벨 스크립트는 BellModel 안에 Speaker/StopBell/StopBell1,
+    -- Bell, SBell을 두고 Light/SLight/Driver의 Material을 Neon으로 바꿉니다.
+    -- 이름만 Light인 다른 차량은 기존처럼 Transparency 방식이므로, 이름만으로
+    -- Neon 방식을 판단하면 두 벨 시스템의 동작이 서로 깨집니다.
+    local function isSxnheBellVisual(desc)
+        local current = desc
+        while current and current ~= busModel do
+            local speaker = current:FindFirstChild("Speaker")
+            if speaker
+                and current:FindFirstChild("Bell")
+                and current:FindFirstChild("SBell")
+                and speaker:FindFirstChild("StopBell")
+                and speaker:FindFirstChild("StopBell1") then
+                return true
+            end
+            current = current.Parent
+        end
+        return false
+    end
+
     local function registerVisual(desc)
         local lowerName = desc.Name:lower()
         if desc:IsA("Sound") then
@@ -224,13 +261,32 @@ local function getOrCreateBusBellSystem(busModel)
                 system.doorOpenValue = desc
             end
         elseif desc:IsA("BasePart") or desc:IsA("Light") then
+            local sxnheMaterialLight = isSxnheBellVisual(desc)
             if lowerName == "slight" or lowerName:find("speciallight") then
-                addUnique(system.specialLights, desc)
+                registerLight(system.specialLights, desc, "special", sxnheMaterialLight)
             elseif lowerName == "driver" or lowerName:find("driverlight") then
-                addUnique(system.driverLights, desc)
+                registerLight(system.driverLights, desc, "driver", sxnheMaterialLight)
             elseif lowerName == "light" or lowerName == "light2" or lowerName:find("belllight") then
-                addUnique(system.lights, desc)
+                -- Point1~Point19의 기존 벨 로직은 Light/Light2.Transparency = 0
+                -- 으로 점등합니다. 이름이 Light라는 이유만으로 Neon으로 바꾸면
+                -- 실제 파트가 투명한 상태로 남아 소리만 들리는 문제가 생깁니다.
+                -- 단, sxnhe_0 원본 BellModel 안의 Light는 Neon 방식입니다.
+                registerLight(system.lights, desc, "normal", sxnheMaterialLight)
             end
+        end
+    end
+
+    -- Point1~Point19 안의 Prompt가 속한 벨 묶음에서 Light/Light2를 직접 찾습니다.
+    -- 개별 버튼 스크립트의 `script.Parent.Parent.Parent.Light` 구조도 여기서 지원됩니다.
+    local function registerPromptAssemblyVisuals(prompt)
+        local current = prompt and prompt.Parent
+        for _ = 1, 3 do
+            if not current or current == busModel then break end
+            for _, name in ipairs({ "Light", "Light2", "SLight", "Driver" }) do
+                local visual = current:FindFirstChild(name)
+                if visual then registerVisual(visual) end
+            end
+            current = current.Parent
         end
     end
 
@@ -238,6 +294,7 @@ local function getOrCreateBusBellSystem(busModel)
     for _, desc in ipairs(busModel:GetDescendants()) do
         if desc:IsA("ProximityPrompt") then
             hookPrompt(desc, isSpecialBellInstance(desc.Parent))
+            registerPromptAssemblyVisuals(desc)
         elseif desc:IsA("ClickDetector") then
             hookClick(desc, isSpecialBellInstance(desc.Parent))
         end
@@ -255,11 +312,11 @@ local function getOrCreateBusBellSystem(busModel)
         end
         local l1 = mainPart:FindFirstChild("Light")
         if l1 and not table.find(system.lights, l1) then
-            table.insert(system.lights, l1)
+            registerLight(system.lights, l1, "normal", false)
         end
         local l2 = mainPart:FindFirstChild("Light2")
         if l2 and not table.find(system.lights, l2) then
-            table.insert(system.lights, l2)
+            registerLight(system.lights, l2, "normal", false)
         end
     end
 
@@ -267,6 +324,7 @@ local function getOrCreateBusBellSystem(busModel)
     busModel.DescendantAdded:Connect(function(desc)
         if desc:IsA("ProximityPrompt") then
             hookPrompt(desc, isSpecialBellInstance(desc.Parent))
+            registerPromptAssemblyVisuals(desc)
         elseif desc:IsA("ClickDetector") then
             hookClick(desc, isSpecialBellInstance(desc.Parent))
         end
@@ -286,6 +344,48 @@ local function getOrCreateBusBellSystem(busModel)
     return system
 end
 
+-- 기본 Point 벨은 Light/Light2의 Transparency를 직접 바꿉니다. 별도로
+-- usesMaterialSignal=true로 등록한 특수 차량만 Material/Color 방식을 씁니다.
+local function setBellLightState(system, light, isOn)
+    if not light or not light.Parent then return end
+    local saved = system.lightStates[light]
+
+    if light:IsA("BasePart") then
+        if isOn then
+            if saved and saved.usesMaterialSignal then
+                light.Material = Enum.Material.Neon
+                light.Color = saved.role == "normal"
+                    and Color3.fromRGB(196, 40, 28)
+                    or Color3.fromRGB(255, 0, 0)
+            else
+                light.Transparency = 0
+            end
+        elseif saved then
+            light.Transparency = saved.transparency
+            light.Material = saved.material
+            light.Color = saved.color
+        else
+            light.Transparency = 1
+        end
+    elseif light:IsA("Light") then
+        light.Enabled = isOn and true or (saved and saved.enabled or false)
+    end
+end
+
+local function isBellLightOn(system, light)
+    if not light or not light.Parent then return false end
+    local saved = system.lightStates[light]
+    if light:IsA("BasePart") then
+        if saved and saved.usesMaterialSignal then
+            return light.Material == Enum.Material.Neon
+        end
+        return light.Transparency < 0.5
+    elseif light:IsA("Light") then
+        return light.Enabled
+    end
+    return false
+end
+
 -- suppressFirebase=true인 경우, 물리 벨에서 이미 Firebase에 기록한 이벤트를
 -- Roblox에서 재생만 하고 다시 Firebase로 되쏘지 않아 무한 반복을 막습니다.
 triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isSpecial)
@@ -301,19 +401,23 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isS
 
     print(string.format("[하차벨 작동] 버스: %s, 사유: %s, 트리거: %s", busModel.Name, tostring(triggerReason), player and player.Name or "자동예약"))
 
-    -- 1. 기존 일반 차량은 모든 프롬프트를 비활성화합니다. SPoint가 있는 차량은
-    --    반대 종류만 활성화하여 일반/장애인 벨을 서로 전환할 수 있게 합니다.
+    -- 1. 하차벨이 켜져 있는 동안에는 어떤 종류의 하차벨도 다시 누를 수 없어야 합니다.
+    --    sxnhe_0 원본 스크립트는 반대편 입력을 다시 켜지만, 통합 시스템에서는
+    --    중복 벨 이벤트를 막기 위해 모든 ProximityPrompt를 잠급니다.
     for _, prompt in ipairs(system.prompts) do
         if prompt.Parent then
             prompt.Enabled = false
         end
     end
-    local switchTargets = isSpecial and system.normalPrompts or system.specialPrompts
-    if #switchTargets > 0 then
-        for _, prompt in ipairs(switchTargets) do
-            if prompt.Parent then prompt.Enabled = true end
+    -- 같은 Triggered 이벤트에서 원본 스크립트가 Prompt를 다시 켠 경우에도
+    -- 모든 연결 함수가 끝난 직후 재잠금합니다.
+    task.defer(function()
+        if system.isRinging then
+            for _, prompt in ipairs(system.prompts) do
+                if prompt.Parent then prompt.Enabled = false end
+            end
         end
-    end
+    end)
 
     -- 2. 일반/장애인 하차벨 상태 및 소리. 일반 벨만 있는 기존 차량은 기존 Sound를 그대로 사용합니다.
     if isSpecial and system.specialBellValue then
@@ -328,22 +432,13 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isS
         sound:Play()
     end
 
-    -- 3. 하차벨 라이트 점등 (Transparency = 0 또는 Light.Enabled = true)
+    -- 3. 하차벨 라이트 점등 (차량별 Transparency 또는 Material/Color 방식 지원)
     local lightsToEnable = isSpecial and system.specialLights or system.lights
     for _, light in ipairs(lightsToEnable) do
-        if light.Parent then
-            if light:IsA("BasePart") then
-                light.Transparency = 0
-            elseif light:IsA("Light") then
-                light.Enabled = true
-            end
-        end
+        setBellLightState(system, light, true)
     end
     for _, light in ipairs(system.driverLights) do
-        if light.Parent then
-            if light:IsA("BasePart") then light.Transparency = 0
-            elseif light:IsA("Light") then light.Enabled = true end
-        end
+        setBellLightState(system, light, true)
     end
 
     if not suppressFirebase then
@@ -424,16 +519,9 @@ isGameBellTurnedOff = function(system)
     for _, light in ipairs(trackedLights) do
         if light.Parent then
             hasTrackedLight = true
-            if light:IsA("BasePart") then
-                if light.Transparency < 0.5 then
-                    anyLightOn = true
-                    break
-                end
-            elseif light:IsA("Light") then
-                if light.Enabled then
-                    anyLightOn = true
-                    break
-                end
+            if isBellLightOn(system, light) then
+                anyLightOn = true
+                break
             end
         end
     end
@@ -443,15 +531,11 @@ isGameBellTurnedOff = function(system)
         return true
     end
 
-    -- 2. 프롬프트가 외부 스크립트에 의해 다시 활성화된 경우
+    -- 2. sxnhe_0 원본 스크립트가 반대편 Prompt를 다시 켜더라도, 이는
+    --    하차벨 해제 신호가 아닙니다. 즉시 잠가 중복 하차벨 입력을 막습니다.
     for _, prompt in ipairs(system.prompts) do
         if prompt.Parent and prompt.Enabled then
-            -- 장애인/일반 벨 전환을 위해 반대편 입력만 켜둔 경우는 정상 상태입니다.
-            local isExpectedSwitch = (system.isSpecialRinging and table.find(system.normalPrompts, prompt))
-                or ((not system.isSpecialRinging) and table.find(system.specialPrompts, prompt))
-            if not isExpectedSwitch then
-                return true
-            end
+            prompt.Enabled = false
         end
     end
 
@@ -481,19 +565,13 @@ resetBusBell = function(busModel, notifyFirebase)
         end
     end
 
-    -- 2. 하차벨 라이트 소등 (Transparency = 1 또는 Light.Enabled = false)
+    -- 2. 하차벨 라이트 소등 (점등 전 차량 고유 상태로 복원)
     local allLights = {}
     for _, list in ipairs({ system.lights, system.specialLights, system.driverLights }) do
         for _, light in ipairs(list) do addUnique(allLights, light) end
     end
     for _, light in ipairs(allLights) do
-        if light.Parent then
-            if light:IsA("BasePart") then
-                light.Transparency = 1
-            elseif light:IsA("Light") then
-                light.Enabled = false
-            end
-        end
+        setBellLightState(system, light, false)
     end
     if system.normalBellValue then system.normalBellValue.Value = false end
     if system.specialBellValue then system.specialBellValue.Value = false end
@@ -1872,7 +1950,8 @@ local function pollPhysicalBellFast()
             end
 
             local event = HttpService:JSONDecode(response.Body)
-            if typeof(event) ~= "table" or event.source ~= "physical" then
+            local source = typeof(event) == "table" and tostring(event.source or "") or ""
+            if typeof(event) ~= "table" or (source ~= "physical" and source ~= "web_manual") then
                 return
             end
 
@@ -1895,9 +1974,10 @@ local function pollPhysicalBellFast()
 
             if model then
                 local button = tostring(event.button or "A"):upper()
-                triggerBusBell(model, nil, "PHYSICAL: " .. button, true, button == "B" or button == "SPECIAL")
+                local reason = source == "web_manual" and "WEB_MANUAL" or "PHYSICAL"
+                triggerBusBell(model, nil, reason .. ": " .. button, true, button == "B" or button == "SPECIAL")
             else
-                warn("[로블록스 레이더] 실제 벨 이벤트를 받았지만 탑승 중인 BUS를 찾지 못했습니다.")
+                warn("[로블록스 레이더] 하차벨 이벤트를 받았지만 탑승 중인 BUS를 찾지 못했습니다.")
             end
         end)
 

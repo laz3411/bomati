@@ -23,6 +23,14 @@ DEFAULT_FIREBASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedata
 MAX_CONTEXT_AGE_MS = 4_000
 REMOTE_BELL_MAX_AGE_MS = 5_000
 MODE_REFRESH_INTERVAL_SEC = 2.0
+# Firebase의 짧은 지연/일시 실패를 미탑승으로 오인해 MODE IDLE(전체 리셋)를
+# 보내지 않도록, 마지막으로 확인한 탑승 상태를 이 시간만큼 유지합니다.
+CONTEXT_STALE_GRACE_SEC = 20.0
+# 위치 판정은 탑승 경계에서 한 번 정도 흔들릴 수 있으므로, 정상 timestamp의
+# 미탑승 상태도 연속 확인된 뒤에만 보드를 IDLE로 전환합니다.
+INACTIVE_CONTEXT_CONFIRM_SEC = 2.0
+# bell_reset 이벤트를 놓쳤을 때 쓰는 상태 폴링 보조 해제의 디바운스 시간입니다.
+BELL_OFF_CONFIRM_SEC = 0.8
 
 
 class FirebaseFastClient:
@@ -175,8 +183,15 @@ def run(port, baud, firebase_url, poll_interval):
     last_context_key = None
     last_remote_event_id = None
     last_boarded_bus = None
-    last_bell_ringing = False
+    # /bell/latest 수신 직후에는 Roblox의 /radar/bell 상태 반영까지 짧은 지연이
+    # 있습니다. 게임이 실제로 켜짐을 한 번 확인하기 전의 false는 절대 RESET으로
+    # 해석하지 않습니다. 그래야 벨이 랜덤하게 바로 꺼지지 않습니다.
+    game_bell_confirmed_on = False
     last_mode_sent_at = 0.0
+    last_fresh_context = {"active": False}
+    last_fresh_context_at = 0.0
+    inactive_context_since = None
+    bell_off_since = None
 
     running = True
 
@@ -238,7 +253,14 @@ def run(port, baud, firebase_url, poll_interval):
                         if source != "physical" and event_id != last_remote_event_id:
                             handle_remote_bell_event(device, latest_bell)
                             last_remote_event_id = event_id
-                            last_bell_ringing = (latest_bell.get("type") != "bell_reset")
+                            if str(latest_bell.get("type") or "").lower() == "bell_reset" or latest_bell.get("button") == "RESET":
+                                game_bell_confirmed_on = False
+                                bell_off_since = None
+                            else:
+                                # BELL 명령은 우선 보드에 유지하고, 이후 게임의 켜짐
+                                # 상태가 확인되어야만 /radar/bell false로 해제합니다.
+                                game_bell_confirmed_on = False
+                                bell_off_since = None
             except Exception:
                 pass
 
@@ -246,10 +268,41 @@ def run(port, baud, firebase_url, poll_interval):
             if now >= next_context_poll:
                 next_context_poll = now + poll_interval
                 try:
-                    ctx = client.request("/radar/bell.json", "GET") or {"active": False}
-                    ts = ctx.get("timestamp")
+                    received_context = client.request("/radar/bell.json", "GET") or {"active": False}
+                    ts = received_context.get("timestamp")
                     is_fresh = isinstance(ts, (int, float)) and int(time.time() * 1000) - ts <= MAX_CONTEXT_AGE_MS
-                    if ctx.get("active") is not True or not is_fresh:
+                    if is_fresh and received_context.get("active") is True:
+                        # active=False도 정상적으로 갱신된 값이면 실제 하차/미탑승으로
+                        # 처리해야 하지만, 위치 감지의 한 번짜리 흔들림은 아래에서
+                        # 확인 시간을 거쳐 처리합니다.
+                        ctx = received_context
+                        last_fresh_context = dict(ctx)
+                        last_fresh_context_at = now
+                        inactive_context_since = None
+                    elif is_fresh:
+                        # 정상 수신된 미탑승이라도 마지막 상태가 탑승 중이었다면
+                        # 2초 연속 확인 전에는 기존 버스 모드/래치를 유지합니다.
+                        if last_fresh_context.get("active") is True:
+                            if inactive_context_since is None:
+                                inactive_context_since = now
+                            if now - inactive_context_since < INACTIVE_CONTEXT_CONFIRM_SEC:
+                                ctx = dict(last_fresh_context)
+                            else:
+                                ctx = received_context
+                                last_fresh_context = dict(ctx)
+                                last_fresh_context_at = now
+                                inactive_context_since = None
+                        else:
+                            ctx = received_context
+                            last_fresh_context = dict(ctx)
+                            last_fresh_context_at = now
+                    elif (
+                        last_fresh_context.get("active") is True
+                        and now - last_fresh_context_at < CONTEXT_STALE_GRACE_SEC
+                    ):
+                        # 네트워크·Firebase 지연 중에는 하차벨 래치와 릴레이를 유지합니다.
+                        ctx = dict(last_fresh_context)
+                    else:
                         ctx = {"active": False}
 
                     with context_lock:
@@ -271,20 +324,31 @@ def run(port, baud, firebase_url, poll_interval):
                         if just_boarded and is_bell_ringing:
                             time.sleep(0.04)
                             send_silent_bell(device, ctx)
-                            last_bell_ringing = True
+                            game_bell_confirmed_on = True
+                            bell_off_since = None
                             if latest_bell and isinstance(latest_bell, dict):
                                 last_remote_event_id = str(latest_bell.get("eventId") or "")
 
                     if is_active:
                         last_boarded_bus = bus_id
-                        # 탑승 중 게임 안에서 하차벨이 꺼진 경우 소등 신호 전달
-                        if last_bell_ringing and not is_bell_ringing:
-                            write_device_command(device, "RESET")
-                            print("[장치] 게임 내 하차벨 소등 감지 -> RESET 전송")
-                            last_bell_ringing = False
+                        # 게임에서 점등 상태가 실제로 확인된 뒤에만 상태 폴링을
+                        # 보조 해제 수단으로 씁니다. 원격 명령 직후의 false는
+                        # Roblox 반영 지연일 수 있으므로 RESET을 보내지 않습니다.
+                        if is_bell_ringing:
+                            game_bell_confirmed_on = True
+                            bell_off_since = None
+                        elif game_bell_confirmed_on:
+                            if bell_off_since is None:
+                                bell_off_since = now
+                            elif now - bell_off_since >= BELL_OFF_CONFIRM_SEC:
+                                write_device_command(device, "RESET")
+                                print("[장치] 게임 내 하차벨 소등 감지 -> RESET 전송")
+                                game_bell_confirmed_on = False
+                                bell_off_since = None
                     else:
                         last_boarded_bus = None
-                        last_bell_ringing = False
+                        game_bell_confirmed_on = False
+                        bell_off_since = None
                 except Exception:
                     pass
 
