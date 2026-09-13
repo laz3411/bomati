@@ -20,8 +20,9 @@ local ContextActionService = game:GetService("ContextActionService")
 local player = Players.LocalPlayer
 local checkRemote = ReplicatedStorage:WaitForChild("AdminAbilityCheck", 15)
 local appearanceRemote = ReplicatedStorage:WaitForChild("AdminAppearanceRequest", 15)
+local resetRemote = ReplicatedStorage:WaitForChild("AdminWorldReset", 15)
 
-if not checkRemote or not appearanceRemote then
+if not checkRemote or not appearanceRemote or not resetRemote then
     warn("[관리자 기능] 서버 스크립트를 찾지 못했습니다.")
     return
 end
@@ -167,6 +168,12 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         return
     elseif shiftHeld and input.KeyCode == Enum.KeyCode.V then
         toggleInvisible()
+        return
+    elseif shiftHeld and input.KeyCode == Enum.KeyCode.N then
+        resetRemote:FireServer()
+        stopFlying()
+        invisible = false
+        setStatus("관리자 기능: Shift+F 비행 · Shift+V 투명화", false)
         return
     end
 

@@ -10,6 +10,7 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- 사용자 지정 Firebase Realtime Database URL
 local FIREBASE_DATABASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -2761,6 +2762,28 @@ task.spawn(function()
         pollPhysicalBellFast()
         task.wait(0.10)
     end
+end)
+
+-- 관리자 Shift+N 초기화 신호: 게임 내부의 하차벨/예약/탑승 캐시도 함께 초기화합니다.
+task.spawn(function()
+    local resetSignal = ReplicatedStorage:WaitForChild("AdminWorldResetSignal", 30)
+    if not resetSignal or not resetSignal:IsA("BindableEvent") then
+        return
+    end
+
+    resetSignal.Event:Connect(function()
+        for busModel, _ in pairs(busBellSystems) do
+            if busModel and busModel.Parent then
+                resetBusBell(busModel, false)
+            end
+        end
+
+        activeReservations = {}
+        lastBoardedBus = nil
+        lastPhysicalBellEventId = nil
+        radarClearedForAbsentTarget = false
+        print("[로블록스 레이더] 관리자 초기화 신호 수신 -> 벨/예약/탑승 상태 초기화")
+    end)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
