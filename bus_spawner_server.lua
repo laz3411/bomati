@@ -4,6 +4,7 @@
     설치 위치: ServerScriptService
 
     ReplicatedStorage 안의 BusModels 폴더에 넣어 둔 Model만 소환합니다.
+    클라이언트가 미리 배치한 CFrame으로 확정하되, 플레이어와 너무 먼 위치는 거부합니다.
     같은 플레이어가 새 버스를 소환하면, 그 플레이어가 전에 소환한 버스는 삭제됩니다.
 --]]
 
@@ -61,45 +62,42 @@ catalogRemote.OnServerInvoke = function()
     return names
 end
 
-local function findSpawnPart()
-    -- 전용 파트를 우선 사용합니다.
-    for _, name in ipairs({ "BusSpawn", "BusSpawnLocation" }) do
-        local part = workspace:FindFirstChild(name, true)
-        if part and part:IsA("BasePart") then
-            return part
+local function getFallbackCFrame(player)
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if root then
+        local look = root.CFrame.LookVector
+        local forward = Vector3.new(look.X, 0, look.Z)
+        if forward.Magnitude < 0.01 then
+            forward = Vector3.new(0, 0, -1)
+        else
+            forward = forward.Unit
         end
+        local position = root.Position + forward * 24 + Vector3.new(0, 3, 0)
+        return CFrame.lookAt(position, position + forward)
     end
 
-    -- BUS_SPAWN 태그가 붙은 파트도 지원합니다.
-    for _, tagged in ipairs(CollectionService:GetTagged("BUS_SPAWN")) do
-        if tagged:IsA("BasePart") and tagged:IsDescendantOf(workspace) then
-            return tagged
-        end
-    end
-
-    -- 기존 맵의 SpawnLocation을 마지막 대체 위치로 사용합니다.
-    local fallback = workspace:FindFirstChild("SpawnLocation", true)
-    if fallback and fallback:IsA("BasePart") then
-        return fallback
-    end
-
-    return nil
+    return CFrame.new(0, 5, 0)
 end
 
-local function getSpawnCFrame(player)
-    local spawnPart = findSpawnPart()
-    if spawnPart then
-        -- 파트의 앞 방향과 회전값을 그대로 사용합니다.
-        return spawnPart.CFrame * CFrame.new(0, 3, 0)
+local function isNearbyPlacement(player, placementCFrame)
+    if typeof(placementCFrame) ~= "CFrame" then
+        return false
+    end
+
+    local position = placementCFrame.Position
+    -- NaN 값이 들어오면 비교 결과가 이상해질 수 있으므로 명시적으로 거부합니다.
+    if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z then
+        return false
     end
 
     local character = player.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
-    if root then
-        return root.CFrame * CFrame.new(0, 2, -28)
+    if not root then
+        return false
     end
 
-    return CFrame.new(0, 5, 0)
+    return (position - root.Position).Magnitude <= 100
 end
 
 local function destroyActiveBus(player)
@@ -114,7 +112,7 @@ local function hasBasePart(model)
     return model:FindFirstChildWhichIsA("BasePart", true) ~= nil
 end
 
-spawnRemote.OnServerEvent:Connect(function(player, requestedName)
+spawnRemote.OnServerEvent:Connect(function(player, requestedName, requestedCFrame)
     if typeof(requestedName) ~= "string" then
         return
     end
@@ -148,8 +146,13 @@ spawnRemote.OnServerEvent:Connect(function(player, requestedName)
         CollectionService:AddTag(newBus, "BUS")
     end
 
+    local placementCFrame = requestedCFrame
+    if not isNearbyPlacement(player, placementCFrame) then
+        placementCFrame = getFallbackCFrame(player)
+    end
+
     newBus.Parent = workspace
-    newBus:PivotTo(getSpawnCFrame(player))
+    newBus:PivotTo(placementCFrame)
 
     destroyActiveBus(player)
     activeBuses[player] = newBus

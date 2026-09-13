@@ -8,16 +8,25 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local busFolder = ReplicatedStorage:WaitForChild("BusModels", 15)
 local spawnRemote = ReplicatedStorage:WaitForChild("BusSpawnRequest", 15)
 local catalogRemote = ReplicatedStorage:WaitForChild("BusCatalog", 15)
 
-if not spawnRemote or not catalogRemote then
+if not busFolder or not spawnRemote or not catalogRemote then
     warn("[버스 선택] 서버 스크립트의 RemoteEvent/RemoteFunction을 찾지 못했습니다.")
     return
 end
+
+local previewModel = nil
+local previewBusName = nil
+local previewRotation = 0
+local PREVIEW_DISTANCE = 24
+local PREVIEW_HEIGHT = 3
+local ROTATION_STEP = math.rad(15)
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "BusSelectorGui"
@@ -56,7 +65,7 @@ help.BackgroundTransparency = 1
 help.Position = UDim2.fromOffset(20, 48)
 help.Size = UDim2.new(1, -40, 0, 24)
 help.Font = Enum.Font.Gotham
-help.Text = "B로 열고, 버스를 고르면 기존 버스가 교체됩니다."
+help.Text = "버스를 고른 뒤 R 회전 · T 설치 · B/ESC 취소"
 help.TextColor3 = Color3.fromRGB(180, 187, 200)
 help.TextSize = 13
 help.TextXAlignment = Enum.TextXAlignment.Left
@@ -113,6 +122,90 @@ local function clearButtons()
     end
 end
 
+local function destroyPreview()
+    if previewModel then
+        previewModel:Destroy()
+    end
+    previewModel = nil
+    previewBusName = nil
+    previewRotation = 0
+end
+
+local function getPreviewCFrame()
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then
+        return nil
+    end
+
+    local camera = workspace.CurrentCamera
+    local look = camera and camera.CFrame.LookVector or root.CFrame.LookVector
+    local forward = Vector3.new(look.X, 0, look.Z)
+    if forward.Magnitude < 0.01 then
+        local rootLook = root.CFrame.LookVector
+        forward = Vector3.new(rootLook.X, 0, rootLook.Z)
+    end
+    if forward.Magnitude < 0.01 then
+        forward = Vector3.new(0, 0, -1)
+    else
+        forward = forward.Unit
+    end
+
+    local position = root.Position + forward * PREVIEW_DISTANCE + Vector3.new(0, PREVIEW_HEIGHT, 0)
+    local facing = CFrame.lookAt(position, position + forward)
+    return facing * CFrame.Angles(0, previewRotation, 0)
+end
+
+local function updatePreview()
+    if not previewModel or not previewModel.Parent then
+        return
+    end
+    local placementCFrame = getPreviewCFrame()
+    if placementCFrame then
+        previewModel:PivotTo(placementCFrame)
+    end
+end
+
+local function makePreview(busName)
+    destroyPreview()
+
+    local source = busFolder:FindFirstChild(busName)
+    if not source or not source:IsA("Model") then
+        warn("[버스 선택] 선택한 버스를 찾지 못했습니다:", tostring(busName))
+        return
+    end
+
+    previewBusName = busName
+    previewRotation = 0
+    previewModel = source:Clone()
+
+    -- 미리보기 안의 Script가 실행되거나 실제 차량 입력을 가로채지 않도록 제거합니다.
+    for _, descendant in ipairs(previewModel:GetDescendants()) do
+        if descendant:IsA("Script") or descendant:IsA("LocalScript") or descendant:IsA("ModuleScript") then
+            descendant:Destroy()
+        elseif descendant:IsA("BasePart") then
+            descendant.Anchored = true
+            descendant.CanCollide = false
+            descendant.CanTouch = false
+            descendant.CanQuery = false
+            descendant.LocalTransparencyModifier = math.max(descendant.LocalTransparencyModifier, 0.35)
+        end
+    end
+
+    local outline = Instance.new("Highlight")
+    outline.Name = "PlacementOutline"
+    outline.Adornee = previewModel
+    outline.FillColor = Color3.fromRGB(80, 190, 255)
+    outline.FillTransparency = 0.82
+    outline.OutlineColor = Color3.fromRGB(255, 230, 80)
+    outline.OutlineTransparency = 0
+    outline.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    outline.Parent = previewModel
+
+    previewModel.Parent = workspace
+    updatePreview()
+end
+
 local function addMessage(text)
     local message = Instance.new("TextLabel")
     message.Size = UDim2.new(1, -4, 0, 42)
@@ -155,7 +248,7 @@ local function refreshList()
         buttonCorner.Parent = button
 
         button.Activated:Connect(function()
-            spawnRemote:FireServer(busName)
+            makePreview(busName)
             screenGui.Enabled = false
         end)
     end
@@ -180,8 +273,29 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         return
     end
     if input.KeyCode == Enum.KeyCode.B then
-        toggleSelector()
+        if previewModel then
+            destroyPreview()
+        else
+            toggleSelector()
+        end
+    elseif input.KeyCode == Enum.KeyCode.R and previewModel then
+        previewRotation = previewRotation + ROTATION_STEP
+        updatePreview()
+    elseif input.KeyCode == Enum.KeyCode.T and previewModel and previewBusName then
+        local placementCFrame = getPreviewCFrame()
+        if placementCFrame then
+            spawnRemote:FireServer(previewBusName, placementCFrame)
+            destroyPreview()
+        end
     elseif input.KeyCode == Enum.KeyCode.Escape and screenGui.Enabled then
         screenGui.Enabled = false
+    elseif input.KeyCode == Enum.KeyCode.Escape and previewModel then
+        destroyPreview()
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if previewModel then
+        updatePreview()
     end
 end)
