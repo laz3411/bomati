@@ -16,7 +16,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local FIREBASE_DATABASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app"
 local RADAR_ENDPOINT = FIREBASE_DATABASE_URL .. "/radar.json"
 local RESERVATIONS_ENDPOINT = FIREBASE_DATABASE_URL .. "/radar/reservations.json"
-local MISSED_STOP_ENDPOINT = FIREBASE_DATABASE_URL .. "/operations/missedStops"
+local ROUTE_DIRECTION_REMOTE_NAME = "BusRouteDirectionRequest"
+
+local routeDirectionRemote = ReplicatedStorage:FindFirstChild(ROUTE_DIRECTION_REMOTE_NAME)
+if not routeDirectionRemote then
+    routeDirectionRemote = Instance.new("RemoteEvent")
+    routeDirectionRemote.Name = ROUTE_DIRECTION_REMOTE_NAME
+    routeDirectionRemote.Parent = ReplicatedStorage
+end
 
 -- 지도에 표시할 실제 Roblox 사용자명(Player.Name)입니다. 표시명(DisplayName)이 아닙니다.
 local TARGET_ROBLOX_USER_NAME = "laz3411"
@@ -27,16 +34,6 @@ local SEND_INTERVAL = 0.50
 
 -- 하차 예약 정류장 도착 시 하차벨 자동 울림 거리 (studs)
 local ARRIVAL_TRIGGER_DISTANCE = 65
-
--- 하차벨이 켜진 버스가 정류장에 정차하지 않고 통과했는지 판정하는 기준입니다.
--- 짧은 GPS 흔들림이나 정류장 옆 차로 통과를 오탐하지 않도록 접근/정차/이탈을
--- 한 번의 통과 상태로 추적합니다.
-local MISSED_STOP_APPROACH_RADIUS = 75
-local MISSED_STOP_STOP_RADIUS = 45
-local MISSED_STOP_EXIT_RADIUS = 58
-local MISSED_STOP_MAX_STOP_SPEED = 2.5
-local MISSED_STOP_REQUIRED_DWELL_SECONDS = 1.25
-local MISSED_STOP_PASS_COOLDOWN_SECONDS = 45
 
 local isSending = false
 local radarClearedForAbsentTarget = false
@@ -150,6 +147,77 @@ local function getValueFromInstance(inst, names, fallback)
         end
     end
     return fallback
+end
+
+local function normalizeRouteDirection(value)
+    local text = tostring(value or ""):lower():gsub("%s+", "")
+    if text == "up" or text == "upbound" or text == "상행" or text == "상행선" or text == "상" or text == "1" then
+        return "up"
+    end
+    if text == "down" or text == "downbound" or text == "하행" or text == "하행선" or text == "하" or text == "2" then
+        return "down"
+    end
+    if text == "both" or text == "all" or text == "공통" or text == "양방향" then
+        return "both"
+    end
+    return nil
+end
+
+local function getBusRouteDirection(model)
+    return normalizeRouteDirection(getValueFromInstance(model, {
+        "RouteDirection", "routeDirection", "Direction", "direction", "운행방향"
+    }, nil))
+end
+
+local function getBusLicense(model)
+    local value = getValueFromInstance(model, {
+        "BusLicense", "busLicense", "VehicleNumber", "vehicleNumber", "BusNumber", "busNumber", "차량번호"
+    }, nil)
+    if value == nil then return nil end
+    local text = tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then return nil end
+    return text
+end
+
+local function getStopRouteDirection(instance)
+    local foundUp = false
+    local foundDown = false
+    local current = instance
+    while current and current ~= workspace do
+        if CollectionService:HasTag(current, "BUS_STOP_UP")
+            or CollectionService:HasTag(current, "BusStopUp")
+            or CollectionService:HasTag(current, "UPBOUND")
+            or CollectionService:HasTag(current, "상행정류장") then
+            foundUp = true
+        end
+        if CollectionService:HasTag(current, "BUS_STOP_DOWN")
+            or CollectionService:HasTag(current, "BusStopDown")
+            or CollectionService:HasTag(current, "DOWNBOUND")
+            or CollectionService:HasTag(current, "하행정류장") then
+            foundDown = true
+        end
+        local attributeDirection = normalizeRouteDirection(getFirstAttribute(current, {
+            "RouteDirection", "routeDirection", "Direction", "direction",
+            "DirectionTag", "directionTag", "Tag", "tag", "운행방향", "방향태그", "상하행"
+        }, nil))
+        if attributeDirection == "both" then return "both" end
+        if attributeDirection == "up" then foundUp = true end
+        if attributeDirection == "down" then foundDown = true end
+        current = current.Parent
+    end
+    if foundUp and foundDown then return "both" end
+    if foundUp then return "up" end
+    if foundDown then return "down" end
+    return nil
+end
+
+local function stopSupportsRouteDirection(stopDirection, routeDirection)
+    local requested = normalizeRouteDirection(routeDirection)
+    local available = normalizeRouteDirection(stopDirection)
+    if not requested or requested == "both" or not available or available == "both" then
+        return true
+    end
+    return requested == available
 end
 
 local function round1(value)
@@ -732,71 +800,119 @@ end
 -- [2. 노선 정류장 폴더 자동 로드 및 자연수 순서 정렬]
 -- =========================================================================
 local routeStopsCache = {}
-local lastCacheCheckTime = 0
+local routeStopsCacheCheckedAt = {}
 
--- 노선 폴더 탐색 (workspace 직속, Routes/Map/Stops 폴더 하위, GetDescendants 등 폭넓게 탐색)
-local function findRouteFolder(routeName)
+-- 같은 노선에 상행/하행 폴더가 각각 존재할 수 있으므로 일치하는 루트 폴더를 모두 찾습니다.
+-- 각 폴더에는 String 속성 RouteDirection = "상행" 또는 "하행"을 지정할 수 있습니다.
+local function findRouteFolders(routeName)
     if not routeName or routeName == "" then
-        return nil
-    end
-
-    -- 1. workspace 직속 우선 탐색
-    local folder = workspace:FindFirstChild(routeName)
-    if folder and (folder:IsA("Folder") or folder:IsA("Model")) then
-        return folder
+        return {}
     end
 
     local routeNameLower = routeName:lower()
     local routeNumber = routeName:match("%d+")
-    local function matchesRouteFolder(instance)
-        if not (instance:IsA("Folder") or instance:IsA("Model")) then return false end
+    local function getRouteFolderMatchScore(instance)
+        if not (instance:IsA("Folder") or instance:IsA("Model")) then return 0 end
+        -- 실제 운행 차량 모델명이 노선번호를 포함해도 정류장 폴더로 수집하지 않습니다.
+        if instance:IsA("Model") and (
+            CollectionService:HasTag(instance, "BUS")
+            or instance:GetAttribute("SpawnedBus") == true
+            or instance:FindFirstChildWhichIsA("VehicleSeat", true) ~= nil
+        ) then
+            return 0
+        end
         local nameLower = instance.Name:lower()
-        if nameLower == routeNameLower then return true end
+        -- 이전 정상 버전과 동일하게 노선명과 정확히 같은 폴더를 최우선으로 사용합니다.
+        if nameLower == routeNameLower then return 10 end
+
+        local declaredRoute = getValueFromInstance(instance, {
+            "Route", "route", "ROUTE", "Line", "line", "노선", "노선번호"
+        }, nil)
+        if declaredRoute ~= nil then
+            local declaredText = tostring(declaredRoute)
+            if declaredText:lower() == routeNameLower then return 5 end
+            local declaredNumber = declaredText:match("%d+")
+            if routeNumber and declaredNumber == routeNumber then return 3 end
+        end
         -- "Route 115", "115번 정류장"처럼 노선번호를 포함한 폴더명도 지원합니다.
         if routeNumber then
             local nameNumber = instance.Name:match("%d+")
-            return nameNumber == routeNumber
+            if nameNumber == routeNumber then return 1 end
         end
-        return false
+        return 0
     end
 
-    -- 2. workspace 직속 대소문자 무관 탐색
+    local candidates = {}
+    local candidateSet = {}
+    local bestMatchScore = 0
+    local function addCandidate(instance)
+        local score = getRouteFolderMatchScore(instance)
+        if score <= 0 or score < bestMatchScore then return end
+        if score > bestMatchScore then
+            candidates = {}
+            candidateSet = {}
+            bestMatchScore = score
+        end
+        if not candidateSet[instance] then
+            candidateSet[instance] = true
+            table.insert(candidates, instance)
+        end
+    end
+
+    -- 1. workspace 직속 탐색
     for _, child in ipairs(workspace:GetChildren()) do
-        if matchesRouteFolder(child) then
-            return child
-        end
+        addCandidate(child)
     end
 
-    -- 3. 흔히 정류장을 묶어두는 상위 폴더 내부 탐색
+    -- 2. 흔히 정류장을 묶어두는 상위 폴더 안에서 모든 방향 폴더 탐색
     local commonContainerNames = { "Routes", "Route", "Map", "Stops", "BusStops", "BUS", "노선", "정류장" }
     for _, containerName in ipairs(commonContainerNames) do
         local container = workspace:FindFirstChild(containerName)
         if container then
-            local f = container:FindFirstChild(routeName)
-            if f and (f:IsA("Folder") or f:IsA("Model")) then
-                return f
-            end
-            for _, child in ipairs(container:GetChildren()) do
-                if matchesRouteFolder(child) then
-                    return child
-                end
+            for _, descendant in ipairs(container:GetDescendants()) do
+                addCandidate(descendant)
             end
         end
     end
 
-    -- 4. workspace 전체에서 폴더명 일치 탐색
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if matchesRouteFolder(desc) then
-            return desc
-        end
+    -- 3. 이전 정상 버전처럼 workspace 전체에서 정확한 폴더명도 끝까지 확인합니다.
+    -- 앞 단계에서 숫자만 같은 후보를 찾았더라도 뒤쪽의 정확한 노선 폴더가 우선됩니다.
+    for _, descendant in ipairs(workspace:GetDescendants()) do
+        addCandidate(descendant)
     end
 
-    return nil
+    -- 노선 루트 아래에 "115 상행" 같은 보조 폴더가 중복 검색된 경우에는
+    -- 가장 바깥 노선 루트만 남깁니다. 추출기가 내부 방향 폴더까지 재귀 탐색합니다.
+    local roots = {}
+    for _, candidate in ipairs(candidates) do
+        local ancestor = candidate.Parent
+        local hasCandidateAncestor = false
+        while ancestor and ancestor ~= workspace do
+            if candidateSet[ancestor] then
+                hasCandidateAncestor = true
+                break
+            end
+            ancestor = ancestor.Parent
+        end
+        if not hasCandidateAncestor then
+            table.insert(roots, candidate)
+        end
+    end
+    return roots
 end
 
-local function extractStopsFromFolder(folder)
+local function extractStopsFromFolder(folder, routeDirection)
     if not folder then return {} end
+    local folderDirection = normalizeRouteDirection(getFirstAttribute(folder, {
+        "RouteDirection", "routeDirection", "Direction", "direction",
+        "DirectionTag", "directionTag", "Tag", "tag", "운행방향", "방향태그", "상하행"
+    }, nil))
+    if not stopSupportsRouteDirection(folderDirection, routeDirection) then
+        return {}
+    end
+
     local stops = {}
+    local seenInstances = {}
     local autoIndex = 1
     local children = folder:GetChildren()
 
@@ -807,66 +923,75 @@ local function extractStopsFromFolder(folder)
         return a.Name < b.Name
     end)
 
-    for _, child in ipairs(children) do
-        local num = tonumber(child.Name:match("%d+")) or autoIndex
-        autoIndex = autoIndex + 1
+    local function addStopInstance(instance, allowImplicit)
+        if seenInstances[instance] then return end
+        if not (instance:IsA("BasePart") or instance:IsA("Model") or instance:IsA("Folder")) then return end
+        local hasStopMetadata = instance:GetAttribute("StopId") ~= nil
+            or instance:GetAttribute("stopId") ~= nil
+            or instance:GetAttribute("StopName") ~= nil
+            or instance:GetAttribute("정류장명") ~= nil
+        local namedIndex = tonumber(instance.Name:match("%d+"))
+        local declaredContainerDirection = normalizeRouteDirection(getFirstAttribute(instance, {
+            "RouteDirection", "routeDirection", "Direction", "direction",
+            "DirectionTag", "directionTag", "Tag", "tag", "운행방향", "방향태그", "상하행"
+        }, nil))
+        -- 방향 폴더가 Model로 구성되어 있어도 정류장 자체로 오인하지 않습니다.
+        if (instance:IsA("Model") or instance:IsA("Folder")) and declaredContainerDirection and not hasStopMetadata then return end
+        if not allowImplicit and not hasStopMetadata and not namedIndex then return end
 
         local pos = nil
-        if child:IsA("BasePart") then
-            pos = child.Position
-        elseif child:IsA("Model") then
-            pos = child:GetPivot().Position
+        if instance:IsA("BasePart") then
+            pos = instance.Position
+        elseif instance:IsA("Model") then
+            pos = instance:GetPivot().Position
+        elseif instance:IsA("Folder") then
+            local positionPart = instance:FindFirstChildWhichIsA("BasePart", true)
+            if positionPart then pos = positionPart.Position end
         end
 
-        if pos then
-            local stopName = getFirstAttribute(child, { "StopName", "stopName", "Name", "정류장명" }, child.Name)
+        local stopDirection = getStopRouteDirection(instance) or folderDirection
+        if pos and stopSupportsRouteDirection(stopDirection, routeDirection) then
+            local num = namedIndex or autoIndex
+            local stopName = getFirstAttribute(instance, { "StopName", "stopName", "Name", "정류장명" }, instance.Name)
             -- StopId(정류장 고유 번호)가 있으면 노선별 순번과 분리해 사용합니다.
             -- 같은 실제 정류장을 여러 노선 폴더에 넣어도 지도/예약에서 하나로 매칭됩니다.
-            local stopId = getFirstAttribute(child, {
+            local stopId = getFirstAttribute(instance, {
                 "StopId", "stopId", "StopNumber", "stopNumber", "StationId", "stationId",
                 "UniqueStopId", "uniqueStopId", "정류장고유번호", "정류장번호"
             }, nil)
+            seenInstances[instance] = true
             table.insert(stops, {
                 index = num,
                 stopId = stopId ~= nil and tostring(stopId) or nil,
                 name = tostring(stopName),
-                instance = child,
+                direction = stopDirection,
+                instance = instance,
                 position = pos,
                 x = round1(pos.X),
                 y = round1(pos.Y),
                 z = round1(pos.Z)
             })
+            autoIndex = autoIndex + 1
         end
     end
 
-    -- 정류장 Part가 노선 폴더 내부의 하위 폴더/모델에 들어있는 차량도 지원합니다.
-    -- 직접 자식에서 찾지 못한 경우에만 재귀 탐색하여 중복 전송을 막습니다.
-    if #stops == 0 then
-        for _, desc in ipairs(folder:GetDescendants()) do
-            if desc:IsA("BasePart") then
-                local hasStopMetadata = desc:GetAttribute("StopId") ~= nil
-                    or desc:GetAttribute("stopId") ~= nil
-                    or desc:GetAttribute("StopName") ~= nil
-                    or desc:GetAttribute("정류장명") ~= nil
-                local num = tonumber(desc.Name:match("%d+"))
-                if hasStopMetadata or num then
-                    local pos = desc.Position
-                    local stopName = getFirstAttribute(desc, { "StopName", "stopName", "Name", "정류장명" }, desc.Name)
-                    local stopId = getFirstAttribute(desc, {
-                        "StopId", "stopId", "StopNumber", "stopNumber", "StationId", "stationId",
-                        "UniqueStopId", "uniqueStopId", "정류장고유번호", "정류장번호"
-                    }, nil)
-                    table.insert(stops, {
-                        index = num or autoIndex,
-                        stopId = stopId ~= nil and tostring(stopId) or nil,
-                        name = tostring(stopName),
-                        instance = desc,
-                        position = pos,
-                        x = round1(pos.X), y = round1(pos.Y), z = round1(pos.Z)
-                    })
-                    autoIndex = autoIndex + 1
-                end
+    for _, child in ipairs(children) do
+        addStopInstance(child, true)
+    end
+
+    -- 직접 정류장과 방향별 하위 폴더가 함께 있어도 둘 다 읽습니다.
+    for _, descendant in ipairs(folder:GetDescendants()) do
+        local ancestorAlreadyAdded = false
+        local ancestor = descendant.Parent
+        while ancestor and ancestor ~= folder do
+            if seenInstances[ancestor] then
+                ancestorAlreadyAdded = true
+                break
             end
+            ancestor = ancestor.Parent
+        end
+        if not ancestorAlreadyAdded then
+            addStopInstance(descendant, false)
         end
     end
 
@@ -876,30 +1001,146 @@ local function extractStopsFromFolder(folder)
     return stops
 end
 
-local function loadRouteStops(routeName)
+-- 폴더 배치 위치나 이름이 기존 탐색 규칙과 달라도 숫자 이름의 정류장 Part에서
+-- 조상 노선 폴더를 역추적해 복구합니다. 실제 BUS 내부 숫자 Part는 제외합니다.
+local function discoverRouteStopsFromParts(routeName, routeDirection)
+    local routeText = tostring(routeName or "")
+    local routeLower = routeText:lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local routeNumber = routeText:match("%d+")
+    local stops = {}
+    local seen = {}
+
+    local function ancestorMatchesRoute(instance)
+        local declaredRoute = getValueFromInstance(instance, {
+            "Route", "route", "ROUTE", "Line", "line", "노선", "노선번호"
+        }, nil)
+        if declaredRoute ~= nil then
+            local declaredText = tostring(declaredRoute)
+            local declaredLower = declaredText:lower():gsub("^%s+", ""):gsub("%s+$", "")
+            if declaredLower == routeLower then return true end
+            if routeNumber and declaredText:match("%d+") == routeNumber then return true end
+        end
+
+        local nameLower = instance.Name:lower():gsub("^%s+", ""):gsub("%s+$", "")
+        if nameLower == routeLower then return true end
+        return routeNumber ~= nil and instance.Name:match("%d+") == routeNumber
+    end
+
+    for _, part in ipairs(workspace:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local index = tonumber(part.Name:match("^%s*(%d+)%s*$"))
+            local hasStopMetadata = part:GetAttribute("StopId") ~= nil
+                or part:GetAttribute("stopId") ~= nil
+                or part:GetAttribute("StopName") ~= nil
+                or part:GetAttribute("정류장명") ~= nil
+            if index or hasStopMetadata then
+                local cursor = part.Parent
+                local belongsToBus = false
+                local matchesRoute = false
+                while cursor and cursor ~= workspace do
+                    if cursor:IsA("Model") and (
+                        CollectionService:HasTag(cursor, "BUS")
+                        or cursor:GetAttribute("SpawnedBus") == true
+                        or cursor:FindFirstChildOfClass("VehicleSeat") ~= nil
+                    ) then
+                        belongsToBus = true
+                        break
+                    end
+                    if (cursor:IsA("Folder") or cursor:IsA("Model")) and ancestorMatchesRoute(cursor) then
+                        matchesRoute = true
+                    end
+                    cursor = cursor.Parent
+                end
+
+                local stopDirection = getStopRouteDirection(part)
+                if not belongsToBus and matchesRoute and stopSupportsRouteDirection(stopDirection, routeDirection) then
+                    local stopId = getFirstAttribute(part, {
+                        "StopId", "stopId", "StopNumber", "stopNumber", "StationId", "stationId",
+                        "UniqueStopId", "uniqueStopId", "정류장고유번호", "정류장번호"
+                    }, nil)
+                    local key = stopId ~= nil and ("id:" .. tostring(stopId)) or part
+                    if not seen[key] then
+                        seen[key] = true
+                        local stopName = getFirstAttribute(part, { "StopName", "stopName", "Name", "정류장명" }, part.Name)
+                        table.insert(stops, {
+                            index = index or (#stops + 1),
+                            stopId = stopId ~= nil and tostring(stopId) or nil,
+                            name = tostring(stopName),
+                            direction = stopDirection,
+                            instance = part,
+                            position = part.Position,
+                            x = round1(part.Position.X),
+                            y = round1(part.Position.Y),
+                            z = round1(part.Position.Z)
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(stops, function(first, second)
+        return first.index < second.index
+    end)
+    return stops
+end
+
+local function loadRouteStops(routeName, routeDirection)
     if not routeName or routeName == "" then
         return {}
     end
 
+    local directionKey = normalizeRouteDirection(routeDirection) or "all"
+    local cacheKey = tostring(routeName) .. "|" .. directionKey
     local now = os.clock()
-    if routeStopsCache[routeName] and (now - lastCacheCheckTime < 2.0) then
-        return routeStopsCache[routeName]
+    local checkedAt = routeStopsCacheCheckedAt[cacheKey] or 0
+    if routeStopsCache[cacheKey] and (now - checkedAt < 2.0) then
+        return routeStopsCache[cacheKey]
     end
 
-    local folder = findRouteFolder(routeName)
-    local stops = extractStopsFromFolder(folder)
+    local folders = findRouteFolders(routeName)
+    local stops = {}
+    local seenStopKeys = {}
+    local function appendFolderStops(routeFolders)
+        for _, folder in ipairs(routeFolders) do
+            for _, stop in ipairs(extractStopsFromFolder(folder, directionKey)) do
+                local key = stop.stopId and ("id:" .. tostring(stop.stopId)) or stop.instance
+                if not seenStopKeys[key] then
+                    seenStopKeys[key] = true
+                    table.insert(stops, stop)
+                end
+            end
+        end
+    end
+    appendFolderStops(folders)
 
     -- 혹시 노선 번호만 숫자로 추출해서 다시 시도
     if #stops == 0 then
         local numOnly = routeName:match("%d+")
         if numOnly and numOnly ~= routeName then
-            local altFolder = findRouteFolder(numOnly)
-            stops = extractStopsFromFolder(altFolder)
+            appendFolderStops(findRouteFolders(numOnly))
         end
     end
 
-    routeStopsCache[routeName] = stops
-    lastCacheCheckTime = now
+    if #stops == 0 then
+        for _, stop in ipairs(discoverRouteStopsFromParts(routeName, directionKey)) do
+            local key = stop.stopId and ("id:" .. tostring(stop.stopId)) or stop.instance
+            if not seenStopKeys[key] then
+                seenStopKeys[key] = true
+                table.insert(stops, stop)
+            end
+        end
+    end
+
+    table.sort(stops, function(first, second)
+        return first.index < second.index
+    end)
+    for _, stop in ipairs(stops) do
+        stop.route = tostring(routeName)
+        stop.direction = normalizeRouteDirection(stop.direction)
+    end
+    routeStopsCache[cacheKey] = stops
+    routeStopsCacheCheckedAt[cacheKey] = now
     return stops
 end
 
@@ -921,30 +1162,62 @@ local function collectAllMapStops()
         local key = stop.stopId and ("id:" .. tostring(stop.stopId))
             or string.format("pos:%.1f,%.1f", x, z)
         if not seenPositions[key] then
-            seenPositions[key] = true
             -- Firebase 전송용 정류장에는 Instance/Vector3를 넣지 않습니다. 노선
             -- 계산용 Vector3는 buildFallbackRouteStops에서 다시 생성합니다.
-            table.insert(allStops, {
+            local resolvedRoute = routeHint and tostring(routeHint) or (stop.route and tostring(stop.route) or nil)
+            local row = {
                 index = tonumber(stop.index) or (#allStops + 1),
                 stopId = stop.stopId ~= nil and tostring(stop.stopId) or nil,
                 name = tostring(stop.name or ("정류장 " .. tostring(#allStops + 1))),
-                route = routeHint and tostring(routeHint) or (stop.route and tostring(stop.route) or nil),
+                route = resolvedRoute,
+                routes = resolvedRoute and { resolvedRoute } or {},
+                direction = normalizeRouteDirection(stop.direction),
                 x = round1(x),
                 y = round1(y),
                 z = round1(z)
-            })
+            }
+            seenPositions[key] = row
+            table.insert(allStops, row)
+        else
+            -- 같은 StopId가 양방향 노선에서 공유되면 지도에는 하나만 유지하되
+            -- 어느 방향에서도 사용할 수 있도록 방향만 병합합니다.
+            local existing = seenPositions[key]
+            local incomingRoute = routeHint and tostring(routeHint) or (stop.route and tostring(stop.route) or nil)
+            if incomingRoute then
+                existing.routes = existing.routes or {}
+                local routeExists = false
+                for _, existingRoute in ipairs(existing.routes) do
+                    if tostring(existingRoute) == incomingRoute then
+                        routeExists = true
+                        break
+                    end
+                end
+                if not routeExists then table.insert(existing.routes, incomingRoute) end
+            end
+            local existingDirection = normalizeRouteDirection(existing.direction)
+            local incomingDirection = normalizeRouteDirection(stop.direction)
+            if existingDirection and incomingDirection and existingDirection ~= incomingDirection then
+                existing.direction = "both"
+            elseif not existingDirection then
+                existing.direction = incomingDirection
+            end
         end
     end
 
     -- 1. 캐시된 노선 정류장들
     for cachedRouteName, stops in pairs(routeStopsCache) do
+        local routeHint = tostring(cachedRouteName):match("^(.-)|") or cachedRouteName
         for _, s in ipairs(stops) do
-            addStop(s, cachedRouteName)
+            addStop(s, s.route or routeHint)
         end
     end
 
-    -- 2. BUS_STOP, BusStop, BUS_STATION 태그된 정류장들
-    for _, tag in ipairs({ "BUS_STOP", "BusStop", "bus_stop", "BUS_STATION", "BusStation", "정류장" }) do
+    -- 2. 공용/상행/하행 태그가 붙은 정류장들
+    for _, tag in ipairs({
+        "BUS_STOP", "BusStop", "bus_stop", "BUS_STATION", "BusStation", "정류장",
+        "BUS_STOP_UP", "BusStopUp", "UPBOUND", "상행정류장",
+        "BUS_STOP_DOWN", "BusStopDown", "DOWNBOUND", "하행정류장"
+    }) do
         for _, tagged in ipairs(CollectionService:GetTagged(tag)) do
             local pos = nil
             if tagged:IsA("BasePart") then
@@ -971,6 +1244,7 @@ local function collectAllMapStops()
                         index = num,
                         stopId = stopId ~= nil and tostring(stopId) or nil,
                         name = tostring(explicitStopName or tagged.Name),
+                        direction = getStopRouteDirection(tagged),
                         x = round1(pos.X),
                         y = round1(pos.Y),
                         z = round1(pos.Z)
@@ -996,7 +1270,7 @@ end
 -- 노선 폴더가 없거나 차량의 Route 값과 폴더명이 맞지 않을 때 BUS_STOP 태그
 -- 정류장을 노선 진행 판정용 형태로 변환합니다. Route 속성이 붙은 정류장이 하나라도
 -- 있으면 해당 노선만 사용하고, 전부 미지정일 때만 공용 정류장 순서를 사용합니다.
-local function buildFallbackRouteStops(routeName)
+local function buildFallbackRouteStops(routeName, routeDirection)
     local mapStops = collectAllMapStops()
     local routeText = tostring(routeName or "")
     local routeNumber = routeText:match("%d+")
@@ -1019,7 +1293,7 @@ local function buildFallbackRouteStops(routeName)
             target = routeMatches(stop.route) and matchingStops or nil
         end
 
-        if target then
+        if target and stopSupportsRouteDirection(stop.direction, routeDirection) then
             local x = tonumber(stop.x)
             local y = tonumber(stop.y) or 0
             local z = tonumber(stop.z)
@@ -1028,6 +1302,8 @@ local function buildFallbackRouteStops(routeName)
                     index = tonumber(stop.index) or (#target + 1),
                     stopId = stop.stopId ~= nil and tostring(stop.stopId) or nil,
                     name = tostring(stop.name or ("정류장 " .. tostring(#target + 1))),
+                    route = routeText,
+                    direction = normalizeRouteDirection(stop.direction),
                     position = Vector3.new(x, y, z),
                     x = x,
                     y = y,
@@ -1239,6 +1515,8 @@ local function calculateStopProgress(model, routeStops, frontPart, backPart, bus
             index = stop.index,
             stopId = stop.stopId,
             name = stop.name,
+            route = stop.route,
+            direction = stop.direction,
             x = stop.x,
             y = stop.y,
             z = stop.z,
@@ -1250,9 +1528,11 @@ local function calculateStopProgress(model, routeStops, frontPart, backPart, bus
         local isCurrent = currentStop and order == closestOrder
         if not isPassed and not isCurrent then
             table.insert(upcomingStops, {
-            index = stop.index,
-            stopId = stop.stopId,
+                index = stop.index,
+                stopId = stop.stopId,
                 name = stop.name,
+                route = stop.route,
+                direction = stop.direction,
                 x = stop.x,
                 y = stop.y,
                 z = stop.z,
@@ -1265,6 +1545,8 @@ local function calculateStopProgress(model, routeStops, frontPart, backPart, bus
         index = currentStop.index,
         stopId = currentStop.stopId,
         name = currentStop.name,
+        route = currentStop.route,
+        direction = currentStop.direction,
         distance = round1(closestDist)
     } or nil
 
@@ -1372,12 +1654,82 @@ local function getVehicleModel(instance)
     return instance:FindFirstAncestorOfClass("Model") or candidateModel
 end
 
+local lastRouteDirectionRequest = {}
+
+local function replyRouteDirection(player, success, message, model, direction)
+    routeDirectionRemote:FireClient(player, {
+        success = success,
+        message = message,
+        busId = model and model:GetFullName() or nil,
+        route = model and tostring(getValueFromInstance(model, { "route", "Route", "ROUTE", "Line", "line", "노선" }, "")) or "",
+        direction = direction
+    })
+end
+
+routeDirectionRemote.OnServerEvent:Connect(function(player, requestedModel, requestedDirection)
+    local now = os.clock()
+    if now - (lastRouteDirectionRequest[player] or 0) < 0.5 then return end
+    lastRouteDirectionRequest[player] = now
+
+    local direction = normalizeRouteDirection(requestedDirection)
+    if direction ~= "up" and direction ~= "down" then
+        replyRouteDirection(player, false, "상행 또는 하행을 선택해 주세요.", nil, nil)
+        return
+    end
+
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local seat = humanoid and humanoid.SeatPart
+    if not seat or not seat:IsA("VehicleSeat") then
+        replyRouteDirection(player, false, "운전석에 앉은 상태에서만 운행을 시작할 수 있습니다.", nil, nil)
+        return
+    end
+
+    local model = getVehicleModel(seat)
+    if not model or not model:IsDescendantOf(workspace) or requestedModel ~= model then
+        replyRouteDirection(player, false, "현재 운전 중인 버스를 확인할 수 없습니다.", nil, nil)
+        return
+    end
+
+    local wasAlreadyInService = model:GetAttribute("RouteDirectionConfirmed") == true
+    model:SetAttribute("RouteDirection", direction)
+    model:SetAttribute("RouteDirectionConfirmed", true)
+    model:SetAttribute("RouteDirectionDriverUserId", player.UserId)
+    if not wasAlreadyInService then
+        model:SetAttribute("RouteDirectionStartedAt", DateTime.now().UnixTimestampMillis)
+    end
+    model:SetAttribute("RouteDirectionUpdatedAt", DateTime.now().UnixTimestampMillis)
+    busRouteProgress[model:GetFullName()] = nil
+
+    local directionLabel = direction == "up" and "상행" or "하행"
+    local routeName = tostring(getValueFromInstance(model, { "route", "Route", "ROUTE", "Line", "line", "노선" }, ""))
+    local actionLabel = wasAlreadyInService and "방향 변경" or "운행 시작"
+    print(string.format("[버스 %s] %s / %s번 %s / 운전자 %s", actionLabel, model.Name, routeName, directionLabel, player.Name))
+    replyRouteDirection(player, true, string.format("%s번 %s%s.", routeName ~= "" and routeName or "버스", directionLabel, wasAlreadyInService and "으로 변경했습니다" or " 운행을 시작합니다"), model, direction)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    lastRouteDirectionRequest[player] = nil
+end)
+
 local function getVehicleCFrame(model)
     if model.PrimaryPart then
         return model.PrimaryPart.CFrame
     end
 
     return model:GetPivot()
+end
+
+local function busHasActiveDriver(model)
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("VehicleSeat") and descendant.Occupant then
+            local character = descendant.Occupant.Parent
+            if character and Players:GetPlayerFromCharacter(character) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function findFirstMovingPart(model)
@@ -1731,312 +2083,9 @@ determineIsHighFloor = function(model, taggedPart, boardingPart)
     return false -- 기본값: 저상 (false)
 end
 
--- =========================================================================
--- [3-1. 하차벨 점등 상태의 무정차 통과 감지 및 Firebase 기록 큐]
--- =========================================================================
-local missedStopMonitors = {}
-local missedStopReportQueue = {}
-local missedStopSequence = 0
-local MISSED_STOP_MAX_VALID_SAMPLE_SPEED = 180
-local companyConfigWarnings = {}
-
-local function sanitizeFirebaseKey(value)
-    return tostring(value or "unknown"):gsub("[%.%#%$/%[%]]", "_")
-end
-
-local function getStopTrackingKey(stop)
-    if stop.stopId ~= nil and tostring(stop.stopId) ~= "" then
-        return "id:" .. tostring(stop.stopId)
-    end
-    return string.format("index:%s:%.1f:%.1f", tostring(stop.index or ""), stop.x or stop.position.X, stop.z or stop.position.Z)
-end
-
-local function getBusCompanyInfo(model)
-    local companyName = getFirstAttribute(model, {
-        "CompanyName", "companyName", "BusCompanyName", "busCompanyName", "회사명"
-    }, nil)
-    local companyId = getFirstAttribute(model, {
-        "CompanyId", "companyId", "BusCompanyId", "busCompanyId", "회사식별아이디", "회사ID"
-    }, nil)
-
-    if type(companyName) ~= "string" or type(companyId) ~= "string" then
-        return nil, "Bus Model의 CompanyName과 CompanyId 속성을 모두 String으로 설정해야 합니다."
-    end
-
-    companyName = companyName:match("^%s*(.-)%s*$") or ""
-    companyId = companyId:match("^%s*(.-)%s*$") or ""
-    if companyName == "" or companyId == "" then
-        return nil, "Bus Model의 CompanyName과 CompanyId 문자열은 비어 있을 수 없습니다."
-    end
-    if #companyId < 12 or #companyId > 80 or not companyId:match("^[%w_-]+$") then
-        return nil, "CompanyId는 시트 메뉴에서 생성한 12~80자 영문·숫자·밑줄·하이픈 값이어야 합니다."
-    end
-
-    return {
-        name = companyName,
-        id = companyId
-    }, nil
-end
-
-local function getBusDriverInfo(model)
-    for _, descendant in ipairs(model:GetDescendants()) do
-        if descendant:IsA("VehicleSeat") and descendant.Occupant then
-            local character = descendant.Occupant.Parent
-            local player = character and Players:GetPlayerFromCharacter(character) or nil
-            if player then
-                return {
-                    userId = player.UserId,
-                    userName = player.Name,
-                    displayName = player.DisplayName,
-                    seatName = descendant.Name
-                }
-            end
-        end
-    end
-
-    local configuredName = getValueFromInstance(model, {
-        "DriverName", "driverName", "Driver", "driver", "BusDriver", "busDriver", "기사명", "기사"
-    }, nil)
-    local configuredUserId = getValueFromInstance(model, {
-        "DriverUserId", "driverUserId", "DriverId", "driverId", "기사UserId", "기사아이디"
-    }, nil)
-    return {
-        userId = tonumber(configuredUserId),
-        userName = configuredName and tostring(configuredName) or "미확인",
-        displayName = configuredName and tostring(configuredName) or "미확인",
-        seatName = nil
-    }
-end
-
-local function enqueueMissedStopReport(payload)
-    missedStopSequence = missedStopSequence + 1
-    local timestamp = tonumber(payload.occurredAtMs) or DateTime.now().UnixTimestampMillis
-    payload.eventId = string.format(
-        "missed-%s-%d-%d",
-        sanitizeFirebaseKey(SERVER_SESSION_ID),
-        timestamp,
-        missedStopSequence
-    )
-    payload.exportStatus = "pending"
-    payload.createdAtMs = timestamp
-
-    table.insert(missedStopReportQueue, {
-        eventId = payload.eventId,
-        companyId = sanitizeFirebaseKey(payload.company.id),
-        payload = payload,
-        attempts = 0,
-        nextAttemptAt = 0
-    })
-
-    warn(string.format(
-        "[무정차 감지] 노선 %s / 차량 %s / 정류장 %s / 최단거리 %.1f studs / 통과속도 %.1f studs/s",
-        tostring(payload.bus.route),
-        tostring(payload.bus.name),
-        tostring(payload.stop.name),
-        tonumber(payload.passage.minimumDistanceStuds) or -1,
-        tonumber(payload.passage.passSpeedStudsPerSecond) or -1
-    ))
-end
-
--- 네트워크가 잠깐 끊겨도 감지 결과를 버리지 않고 같은 eventId 경로에 재시도합니다.
--- PUT을 사용하므로 응답 유실 뒤 재전송되어도 Google Sheet에는 한 건만 기록됩니다.
-task.spawn(function()
-    while RunService:IsRunning() do
-        local report = missedStopReportQueue[1]
-        if report and os.clock() >= report.nextAttemptAt then
-            local success, err = pcall(function()
-                local response = HttpService:RequestAsync({
-                    Url = MISSED_STOP_ENDPOINT .. "/" .. report.companyId .. "/" .. report.eventId .. ".json",
-                    Method = "PUT",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = HttpService:JSONEncode(report.payload)
-                })
-                if not response.Success then
-                    error(string.format("Firebase missedStops HTTP %s: %s", response.StatusCode, response.StatusMessage))
-                end
-            end)
-
-            if success then
-                print("[무정차 기록 전송 완료]", report.eventId)
-                table.remove(missedStopReportQueue, 1)
-            else
-                report.attempts = report.attempts + 1
-                report.nextAttemptAt = os.clock() + math.min(30, 2 ^ math.min(report.attempts, 5))
-                warn("[무정차 기록 전송 재시도 예정]", report.eventId, err)
-            end
-        end
-        task.wait(0.5)
-    end
-end)
-
-local function updateMissedStopMonitor(model, routeName, routeStops, frontPart, busPosition, bellSystem, isHighFloor, company)
-    if #routeStops == 0 then
-        missedStopMonitors[model] = nil
-        return
-    end
-
-    local now = os.clock()
-    -- 무정차 판정도 차량 방향 파트가 아니라 실제 버스 중심의 거리 변화만 사용합니다.
-    local referencePosition = busPosition
-    local state = missedStopMonitors[model]
-    if not state or state.route ~= routeName then
-        state = {
-            route = routeName,
-            lastPosition = referencePosition,
-            lastSampleAt = now,
-            passage = nil,
-            processedStops = {}
-        }
-        missedStopMonitors[model] = state
-    end
-
-    local sampleSeconds = math.max(now - state.lastSampleAt, 0)
-    local speed = 0
-    if sampleSeconds > 0.01 then
-        speed = horizontalDistance(referencePosition, state.lastPosition) / sampleSeconds
-    end
-    state.lastPosition = referencePosition
-    state.lastSampleAt = now
-
-    -- 좌표가 순간이동하듯 튄 프레임은 통과 판정에 사용하지 않습니다.
-    if speed > MISSED_STOP_MAX_VALID_SAMPLE_SPEED then
-        state.passage = nil
-        return
-    end
-
-    local passage = state.passage
-    if not passage then
-        local candidate = nil
-        local candidateDistance = math.huge
-        for _, stop in ipairs(routeStops) do
-            local stopKey = getStopTrackingKey(stop)
-            local lastProcessedAt = state.processedStops[stopKey]
-            local distance = horizontalDistance(referencePosition, stop.position)
-            local recentlyProcessed = lastProcessedAt and (now - lastProcessedAt) < MISSED_STOP_PASS_COOLDOWN_SECONDS
-            if not recentlyProcessed
-                and distance <= MISSED_STOP_APPROACH_RADIUS
-                and distance < candidateDistance then
-                candidate = stop
-                candidateDistance = distance
-            end
-        end
-
-        if candidate then
-            passage = {
-                stop = candidate,
-                stopKey = getStopTrackingKey(candidate),
-                enteredAt = now,
-                enteredAtMs = DateTime.now().UnixTimestampMillis,
-                lastDistance = candidateDistance,
-                minimumDistance = candidateDistance,
-                enteredStopZone = candidateDistance <= MISSED_STOP_STOP_RADIUS,
-                stationaryStartedAt = nil,
-                didStop = false,
-                bellWasActive = false,
-                bell = nil
-            }
-            state.passage = passage
-        else
-            return
-        end
-    end
-
-    local distance = horizontalDistance(referencePosition, passage.stop.position)
-    passage.minimumDistance = math.min(passage.minimumDistance, distance)
-    if distance <= MISSED_STOP_STOP_RADIUS then
-        passage.enteredStopZone = true
-    end
-
-    if bellSystem.isRinging then
-        passage.bellWasActive = true
-        if not passage.bell then
-            passage.bell = {
-                bellType = bellSystem.lastBellType or (bellSystem.isSpecialRinging and "special" or "normal"),
-                triggerReason = bellSystem.lastTriggerReason or "UNKNOWN",
-                triggeredBy = bellSystem.lastTriggeredPlayerName or "UNKNOWN",
-                triggeredAtMs = bellSystem.lastTriggeredAtMs
-            }
-        end
-    end
-
-    local doorIsOpen = bellSystem.doorOpenValue and bellSystem.doorOpenValue.Value == true
-    if passage.enteredStopZone and doorIsOpen then
-        passage.didStop = true
-    elseif distance <= MISSED_STOP_STOP_RADIUS and speed <= MISSED_STOP_MAX_STOP_SPEED then
-        passage.stationaryStartedAt = passage.stationaryStartedAt or now
-        if (now - passage.stationaryStartedAt) >= MISSED_STOP_REQUIRED_DWELL_SECONDS then
-            passage.didStop = true
-        end
-    else
-        passage.stationaryStartedAt = nil
-    end
-
-    local movingAway = distance > (passage.lastDistance + 0.5)
-    local hasExited = passage.enteredStopZone
-        and distance >= MISSED_STOP_EXIT_RADIUS
-        and movingAway
-
-    if hasExited then
-        state.processedStops[passage.stopKey] = now
-        if passage.bellWasActive and not passage.didStop then
-            if not company then
-                warn(string.format("[무정차 기록 보류] 버스 %s의 회사 속성이 유효하지 않습니다.", model.Name))
-            else
-                local driver = getBusDriverInfo(model)
-                local occurredAtMs = DateTime.now().UnixTimestampMillis
-                enqueueMissedStopReport({
-                    type = "missed_stop",
-                    source = "roblox",
-                    occurredAtMs = occurredAtMs,
-                    company = company,
-                    server = {
-                        sessionId = SERVER_SESSION_ID,
-                        placeId = game.PlaceId,
-                        placeVersion = game.PlaceVersion,
-                        privateServerId = game.PrivateServerId
-                    },
-                    bus = {
-                        id = model:GetFullName(),
-                        name = model.Name,
-                        route = tostring(routeName or ""),
-                        floorType = isHighFloor and "high" or "low"
-                    },
-                    driver = driver,
-                    stop = {
-                        id = passage.stop.stopId and tostring(passage.stop.stopId) or nil,
-                        index = passage.stop.index,
-                        name = passage.stop.name,
-                        x = round1(passage.stop.position.X),
-                        y = round1(passage.stop.position.Y),
-                        z = round1(passage.stop.position.Z)
-                    },
-                    bell = passage.bell or {
-                        bellType = "unknown",
-                        triggerReason = "UNKNOWN",
-                        triggeredBy = "UNKNOWN",
-                        triggeredAtMs = nil
-                    },
-                    passage = {
-                        approachStartedAtMs = passage.enteredAtMs,
-                        minimumDistanceStuds = round1(passage.minimumDistance),
-                        passSpeedStudsPerSecond = round1(speed),
-                        observedSeconds = round1(now - passage.enteredAt),
-                        busX = round1(referencePosition.X),
-                        busY = round1(referencePosition.Y),
-                        busZ = round1(referencePosition.Z)
-                    }
-                })
-            end
-        end
-        state.passage = nil
-    else
-        passage.lastDistance = distance
-    end
-end
-
 local reservationBindingUpdatesInFlight = {}
 
-local function findReservationForBus(model, routeName)
+local function findReservationForBus(model, routeName, routeDirection, busLicense)
     local liveBusId = model:GetFullName()
     local liveBusKey = liveBusId:gsub("[%.%#%$/%[%]]", "_")
 
@@ -2069,7 +2118,11 @@ local function findReservationForBus(model, routeName)
             and (reservation.status == nil or reservation.status == "pending")
         local isWaiting = isPending and reservation.awaitingBoarding == true
         local sameRoute = isWaiting and tostring(reservation.route or "") == tostring(routeName or "")
-        if sameRoute then
+        local reservedDirection = normalizeRouteDirection(reservation.direction)
+        local sameDirection = not reservedDirection or not routeDirection or reservedDirection == routeDirection
+        local reservedLicense = reservation.vehicleNumber ~= nil and tostring(reservation.vehicleNumber) or nil
+        local sameVehicle = not reservedLicense or not busLicense or reservedLicense == tostring(busLicense)
+        if sameRoute and sameDirection and sameVehicle then
             if matchedReservation then
                 warn(string.format(
                     "[하차 예약 결속 보류] 노선 %s의 승차 대기 예약이 여러 개라 차량을 확정할 수 없습니다.",
@@ -2154,23 +2207,20 @@ local function collectBusData()
             if routeName == "" and model then
                 routeName = tostring(model.Name:match("%d+") or "")
             end
-            local company, companyError = getBusCompanyInfo(model)
-            if not company then
-                if companyConfigWarnings[model] ~= companyError then
-                    companyConfigWarnings[model] = companyError
-                    warn(string.format("[회사별 시트 연동 비활성] 버스 %s: %s", model.Name, companyError))
-                end
-            else
-                companyConfigWarnings[model] = nil
-            end
-
+            local routeDirection = getBusRouteDirection(model)
+            local routeDirectionConfirmed = model:GetAttribute("RouteDirectionConfirmed") == true
+            local isInService = routeDirectionConfirmed
+                and (routeDirection == "up" or routeDirection == "down")
+                and busHasActiveDriver(model)
+            local busLicense = getBusLicense(model)
             -- 하차벨 시스템 초기화 (ProximityPrompt 등 연결)
             local bellSystem = getOrCreateBusBellSystem(model)
 
-            -- 노선 정류장 및 다음 남은 정류장 계산
-            local routeStops = loadRouteStops(routeName)
+            -- 이전 정상 커밋과 동일하게 정류장 로딩은 운전자 착석/isInService와
+            -- 분리합니다. 운전자 판정이 잠깐 끊겨도 지도 정류장과 남은 목록은 유지됩니다.
+            local routeStops = loadRouteStops(routeName, routeDirection)
             if #routeStops == 0 then
-                routeStops = buildFallbackRouteStops(routeName)
+                routeStops = buildFallbackRouteStops(routeName, routeDirection)
                 if #routeStops > 0 and not routeFallbackNotices[routeName] then
                     routeFallbackNotices[routeName] = true
                     warn(string.format(
@@ -2183,8 +2233,8 @@ local function collectBusData()
             local currentStop, upcomingStops, allStops = calculateStopProgress(model, routeStops, frontPart, backPart, pos)
 
             -- 하차 예약 감지 및 자동 트리거 검사
-            local reservation, reservationKey = findReservationForBus(model, routeName)
-            if reservation and (reservation.status == "pending" or reservation.status == nil) then
+            local reservation, reservationKey = findReservationForBus(model, routeName, routeDirection, busLicense)
+            if isInService and reservation and (reservation.status == "pending" or reservation.status == nil) then
                 local targetIndex = tonumber(reservation.targetStopIndex)
                 local targetStopId = reservation.targetStopId and tostring(reservation.targetStopId) or nil
                 local targetStop = nil
@@ -2237,9 +2287,6 @@ local function collectBusData()
                 end
             end
 
-            -- 기존 벨/예약 로직은 건드리지 않고, 현재 상태를 읽어 무정차 통과만 별도로 기록합니다.
-            updateMissedStopMonitor(model, routeName, routeStops, frontPart, pos, bellSystem, isHighFloor, company)
-
             -- 몇 초 후 자동 소등이 아닌, 게임 내 하차벨 신호(라이트 소등 등) 감지 시 소등 및 Firebase 전송
             if bellSystem.isRinging and isGameBellTurnedOff(bellSystem) then
                 resetBusBell(model, true)
@@ -2249,6 +2296,10 @@ local function collectBusData()
                 id = model:GetFullName(),
                 name = model.Name,
                 route = routeName,
+                vehicleNumber = busLicense,
+                direction = routeDirection,
+                directionLabel = routeDirection == "up" and "상행" or (routeDirection == "down" and "하행" or "미설정"),
+                inService = isInService,
                 x = round1(pos.X),
                 y = round1(pos.Y),
                 z = round1(pos.Z),
@@ -2262,8 +2313,6 @@ local function collectBusData()
                 upcomingStops = upcomingStops,
                 allStops = allStops,
                 isBellRinging = bellSystem.isRinging == true,
-                companyName = company and company.name or nil,
-                companyId = company and company.id or nil,
                 timestamp = DateTime.now().UnixTimestampMillis
             })
         end
@@ -2277,9 +2326,16 @@ local function collectBusData()
         local duplicate = nil
         for _, existing in ipairs(uniqueBuses) do
             local sameRoute = tostring(existing.route or "") == tostring(bus.route or "")
+            local sameDirection = tostring(existing.direction or "") == tostring(bus.direction or "")
             local sameFloor = existing.isHighFloor == bus.isHighFloor
+            local existingLicense = existing.vehicleNumber ~= nil and tostring(existing.vehicleNumber) or nil
+            local incomingLicense = bus.vehicleNumber ~= nil and tostring(bus.vehicleNumber) or nil
+            local sameVehicle = true
+            if existingLicense and incomingLicense then
+                sameVehicle = existingLicense == incomingLicense
+            end
             local distance = math.sqrt((existing.x - bus.x) ^ 2 + (existing.z - bus.z) ^ 2)
-            if sameRoute and sameFloor and distance <= 4 then
+            if sameRoute and sameDirection and sameFloor and sameVehicle and distance <= 4 then
                 duplicate = existing
                 break
             end
@@ -2554,12 +2610,12 @@ local function findBusForPlayer(player)
         for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
             local model = getVehicleModel(tagged)
             if model and seatPart:IsDescendantOf(model) then
-                return model, tagged, seatPart
+                return model, tagged, seatPart, "seat"
             end
         end
         local seatBus = getVehicleModel(seatPart)
         if seatBus then
-            return seatBus, seatPart, seatPart
+            return seatBus, seatPart, seatPart, "seat"
         end
     end
 
@@ -2570,7 +2626,7 @@ local function findBusForPlayer(player)
         if isBusInPart(floorPart) then
             local model = getVehicleModel(floorPart)
             if model then
-                return model, floorPart, floorPart
+                return model, floorPart, floorPart, "floor"
             end
         end
 
@@ -2578,7 +2634,7 @@ local function findBusForPlayer(player)
         for _, tagged in ipairs(CollectionService:GetTagged("BUS")) do
             local model = getVehicleModel(tagged)
             if model and floorPart:IsDescendantOf(model) then
-                return model, tagged, floorPart
+                return model, tagged, floorPart, "floor"
             end
         end
     end
@@ -2589,7 +2645,7 @@ local function findBusForPlayer(player)
         if isCharacterTouchingPart(character, bPart) then
             local model = getVehicleModel(bPart)
             if model then
-                return model, bPart, bPart
+                return model, bPart, bPart, "busin"
             end
         end
     end
@@ -2601,18 +2657,18 @@ local function findBusForPlayer(player)
             local boardingParts = getBoardingPartsForBus(model, tagged)
             for _, bPart in ipairs(boardingParts) do
                 if isCharacterTouchingPart(character, bPart) then
-                    return model, tagged, bPart
+                    return model, tagged, bPart, "boarding_part"
                 end
             end
 
             -- 5계층: 버스 모델 3D 차체 내부(Bounding Box) 진입 검사 (최종 안전장치)
             if isCharacterInsideModelBoundingBox(character, model) then
-                return model, tagged, model.PrimaryPart or tagged
+                return model, tagged, model.PrimaryPart or tagged, "bounds"
             end
         end
     end
 
-    return nil, nil, nil
+    return nil, nil, nil, nil
 end
 
 local lastBoardingReportedBus = nil
@@ -2623,10 +2679,10 @@ local function collectBellContext()
     local player = findTargetPlayer()
     if not player then
         lastBoardedBus = nil
-        return { active = false, timestamp = DateTime.now().UnixTimestampMillis }
+        return { active = false, canImmediateExit = false, timestamp = DateTime.now().UnixTimestampMillis }
     end
 
-    local model, tagged, detectedPart = findBusForPlayer(player)
+    local model, tagged, detectedPart, boardingEvidence = findBusForPlayer(player)
     local now = os.clock()
 
     local isHighFloor = false
@@ -2636,6 +2692,7 @@ local function collectBellContext()
             model = model,
             tagged = tagged,
             part = detectedPart,
+            boardingEvidence = boardingEvidence,
             isHighFloor = isHighFloor,
             time = now
         }
@@ -2645,6 +2702,7 @@ local function collectBellContext()
             model = lastBoardedBus.model
             tagged = lastBoardedBus.tagged
             detectedPart = lastBoardedBus.part
+            boardingEvidence = "grace"
             isHighFloor = lastBoardedBus.isHighFloor or determineIsHighFloor(model, tagged, detectedPart)
         else
             lastBoardedBus = nil
@@ -2656,7 +2714,7 @@ local function collectBellContext()
             print(string.format("[버스 하차 확인] 플레이어: %s 버스에서 내림 (미탑승 상태 전환)", player.Name))
             lastBoardingReportedBus = nil
         end
-        return { active = false, timestamp = DateTime.now().UnixTimestampMillis }
+        return { active = false, canImmediateExit = false, timestamp = DateTime.now().UnixTimestampMillis }
     end
 
     local position = getBusPosition(model, tagged)
@@ -2679,6 +2737,12 @@ local function collectBellContext()
 
     return {
         active = true,
+        -- 즉시 하차는 실제 좌석·바닥·BUSin 접촉이 확인될 때만 허용합니다.
+        canImmediateExit = boardingEvidence == "seat"
+            or boardingEvidence == "floor"
+            or boardingEvidence == "busin"
+            or boardingEvidence == "boarding_part",
+        boardingEvidence = boardingEvidence,
         mode = isHighFloor and "high" or "low",
         busId = model:GetFullName(),
         busName = model.Name,

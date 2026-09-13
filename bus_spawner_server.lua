@@ -154,6 +154,8 @@ spawnRemote.OnServerEvent:Connect(function(player, requestedName, requestedCFram
     newBus:SetAttribute("SpawnedByUserId", player.UserId)
     newBus:SetAttribute("SpawnedByUserName", player.Name)
     newBus:SetAttribute("SpawnedBus", true)
+    -- 새로 소환한 버스는 운전자가 GUI에서 상행/하행을 확정해야 운행 차량으로 공개됩니다.
+    newBus:SetAttribute("RouteDirectionConfirmed", false)
 
     -- 기존 레이더/탑승/하차벨 시스템이 새 차량으로 인식하도록 BUS 태그를 보장합니다.
     if not CollectionService:HasTag(newBus, "BUS") then
