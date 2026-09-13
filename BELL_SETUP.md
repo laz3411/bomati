@@ -12,6 +12,18 @@
    ```
    *(포트 번호는 장치가 연결된 실제 포트로 지정하세요)*
 
+### 인게임 버스 선택/소환
+
+버스 선택 기능은 기존 Firebase 스크립트와 별도로 다음 두 스크립트를 추가합니다.
+
+1. `ReplicatedStorage` 아래에 `BusModels`라는 **Folder**를 만들고, 소환할 버스 **Model**들을 그 안으로 옮깁니다.
+2. `Workspace` 아래에 `BusSpawn`이라는 **Anchored Part**를 만들고, 버스가 나타날 위치와 방향으로 배치합니다. 이 파트는 `Transparency = 1`, `CanCollide = false`로 두어도 됩니다.
+3. `bus_spawner_server.lua`를 `ServerScriptService` 아래의 **Script**에 붙여넣습니다.
+4. `bus_spawner_client.lua`를 `StarterPlayer > StarterPlayerScripts` 아래의 **LocalScript**에 붙여넣습니다.
+5. 플레이 중 **B**를 누르면 `BusModels` 안의 목록이 열립니다. 버스를 선택하면 기존에 본인이 소환한 버스가 삭제되고 새 버스가 `BusSpawn` 위치에 나타납니다.
+
+각 버스 Model은 기존 레이더/하차벨 인식과 함께 사용하려면 내부에 차체 `BasePart`가 하나 이상 있어야 합니다. `BUS` 태그는 소환 서버가 자동으로 붙입니다.
+
 ### 피지컬 벨 ↔ Roblox 양방향 연동
 
 - Roblox의 `ProximityPrompt` 또는 자동 예약 벨이 울리면 Roblox가 Firebase `/bell/latest`에 `source = roblox` 이벤트를 기록하고, PC 브리지가 보드로 `BELL A` 명령을 보냅니다.
