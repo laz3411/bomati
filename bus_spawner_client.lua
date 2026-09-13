@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -65,7 +66,7 @@ help.BackgroundTransparency = 1
 help.Position = UDim2.fromOffset(20, 48)
 help.Size = UDim2.new(1, -40, 0, 24)
 help.Font = Enum.Font.Gotham
-help.Text = "버스를 고른 뒤 R 회전 · T 설치 · B/ESC 취소"
+help.Text = "마우스 이동: 위치 · 휠/R: 회전 · 좌클릭/T: 설치 · B/ESC: 취소"
 help.TextColor3 = Color3.fromRGB(180, 187, 200)
 help.TextSize = 13
 help.TextXAlignment = Enum.TextXAlignment.Left
@@ -151,7 +152,28 @@ local function getPreviewCFrame()
         forward = forward.Unit
     end
 
-    local position = root.Position + forward * PREVIEW_DISTANCE + Vector3.new(0, PREVIEW_HEIGHT, 0)
+    local position = root.Position + forward * PREVIEW_DISTANCE
+
+    -- 미리보기 중에는 마우스가 가리키는 월드 표면으로 위치를 옮깁니다.
+    -- 표면을 찾지 못하면 기존의 플레이어 앞쪽 배치를 유지합니다.
+    if previewModel then
+        local mousePosition = UserInputService:GetMouseLocation()
+        local inset = GuiService:GetGuiInset()
+        local ray = camera:ViewportPointToRay(
+            mousePosition.X - inset.X,
+            mousePosition.Y - inset.Y
+        )
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = { character, previewModel }
+        rayParams.IgnoreWater = false
+        local hit = workspace:Raycast(ray.Origin, ray.Direction * 1000, rayParams)
+        if hit then
+            position = hit.Position
+        end
+    end
+
+    position = position + Vector3.new(0, PREVIEW_HEIGHT, 0)
     local facing = CFrame.lookAt(position, position + forward)
     return facing * CFrame.Angles(0, previewRotation, 0)
 end
@@ -266,12 +288,31 @@ closeButton.Activated:Connect(function()
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then
-        return
-    end
     if UserInputService:GetFocusedTextBox() then
         return
     end
+
+    -- 미리보기 중에는 마우스 클릭을 배치 조작으로 사용합니다.
+    if previewModel then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local placementCFrame = getPreviewCFrame()
+            if placementCFrame and previewBusName then
+                local installName = previewBusName
+                destroyPreview()
+                spawnRemote:FireServer(installName, placementCFrame)
+            end
+            return
+        elseif input.UserInputType == Enum.UserInputType.MouseWheel then
+            previewRotation = previewRotation + ROTATION_STEP * (input.Position.Z >= 0 and 1 or -1)
+            updatePreview()
+            return
+        end
+    end
+
+    if gameProcessed then
+        return
+    end
+
     if input.KeyCode == Enum.KeyCode.B then
         if previewModel then
             destroyPreview()
@@ -284,8 +325,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     elseif input.KeyCode == Enum.KeyCode.T and previewModel and previewBusName then
         local placementCFrame = getPreviewCFrame()
         if placementCFrame then
-            spawnRemote:FireServer(previewBusName, placementCFrame)
+            local installName = previewBusName
             destroyPreview()
+            spawnRemote:FireServer(installName, placementCFrame)
         end
     elseif input.KeyCode == Enum.KeyCode.Escape and screenGui.Enabled then
         screenGui.Enabled = false

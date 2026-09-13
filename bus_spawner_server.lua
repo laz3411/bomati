@@ -97,7 +97,7 @@ local function isNearbyPlacement(player, placementCFrame)
         return false
     end
 
-    return (position - root.Position).Magnitude <= 100
+    return (position - root.Position).Magnitude <= 150
 end
 
 local function destroyActiveBus(player)
@@ -110,6 +110,20 @@ end
 
 local function hasBasePart(model)
     return model:FindFirstChildWhichIsA("BasePart", true) ~= nil
+end
+
+local function restoreInstalledBusAppearance(model)
+    -- 미리보기는 클라이언트 전용 복제본이지만, 혹시 템플릿에 남은
+    -- 미리보기 표시값이 있더라도 실제 설치 차량은 완전한 모습으로 표시합니다.
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("Highlight") and descendant.Name == "PlacementOutline" then
+            descendant:Destroy()
+        elseif descendant:IsA("BasePart") then
+            pcall(function()
+                descendant.LocalTransparencyModifier = 0
+            end)
+        end
+    end
 end
 
 spawnRemote.OnServerEvent:Connect(function(player, requestedName, requestedCFrame)
@@ -145,6 +159,8 @@ spawnRemote.OnServerEvent:Connect(function(player, requestedName, requestedCFram
     if not CollectionService:HasTag(newBus, "BUS") then
         CollectionService:AddTag(newBus, "BUS")
     end
+
+    restoreInstalledBusAppearance(newBus)
 
     local placementCFrame = requestedCFrame
     if not isNearbyPlacement(player, placementCFrame) then
