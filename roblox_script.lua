@@ -15,6 +15,7 @@ local CollectionService = game:GetService("CollectionService")
 local FIREBASE_DATABASE_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app"
 local RADAR_ENDPOINT = FIREBASE_DATABASE_URL .. "/radar.json"
 local RESERVATIONS_ENDPOINT = FIREBASE_DATABASE_URL .. "/radar/reservations.json"
+local MISSED_STOP_ENDPOINT = FIREBASE_DATABASE_URL .. "/operations/missedStops"
 
 -- 지도에 표시할 실제 Roblox 사용자명(Player.Name)입니다. 표시명(DisplayName)이 아닙니다.
 local TARGET_ROBLOX_USER_NAME = "laz3411"
@@ -26,12 +27,26 @@ local SEND_INTERVAL = 0.50
 -- 하차 예약 정류장 도착 시 하차벨 자동 울림 거리 (studs)
 local ARRIVAL_TRIGGER_DISTANCE = 65
 
+-- 하차벨이 켜진 버스가 정류장에 정차하지 않고 통과했는지 판정하는 기준입니다.
+-- 짧은 GPS 흔들림이나 정류장 옆 차로 통과를 오탐하지 않도록 접근/정차/이탈을
+-- 한 번의 통과 상태로 추적합니다.
+local MISSED_STOP_APPROACH_RADIUS = 75
+local MISSED_STOP_STOP_RADIUS = 45
+local MISSED_STOP_EXIT_RADIUS = 58
+local MISSED_STOP_MAX_STOP_SPEED = 2.5
+local MISSED_STOP_REQUIRED_DWELL_SECONDS = 1.25
+local MISSED_STOP_PASS_COOLDOWN_SECONDS = 45
+
 local isSending = false
 local radarClearedForAbsentTarget = false
 -- Firebase /radar는 전역 단일 경로입니다. 대상 사용자가 실제로 접속한 서버만
 -- 이 스트림을 쓰거나 삭제할 수 있게 소유권을 기록합니다.
 local targetStreamOwnedByThisServer = false
 local SERVER_SESSION_ID = game.JobId ~= "" and game.JobId or ("studio-" .. tostring(game.PlaceId))
+-- collectBusData와 collectBellContext가 같은 탑승 상태를 공유해야 합니다.
+-- Lua의 local 범위는 선언 이후부터이므로 파일 아래쪽에서 선언하면 collectBusData는
+-- 다른 전역 변수를 보게 됩니다.
+local lastBoardedBus = nil
 
 local function isTargetPlayerConnected()
     -- 대상 사용자를 지정하지 않은 개발 환경에서는 기존 전체 전송 동작을 유지합니다.
@@ -140,6 +155,14 @@ local function round1(value)
     return math.round(value * 10) / 10
 end
 
+-- 지도 정류장 Part는 표시를 위해 도로보다 크게 아래/위에 배치될 수 있으므로
+-- 차량 접근, 통과, 예약 도착 판정에는 높이(Y)를 제외한 X/Z 거리만 사용합니다.
+local function horizontalDistance(firstPosition, secondPosition)
+    local dx = firstPosition.X - secondPosition.X
+    local dz = firstPosition.Z - secondPosition.Z
+    return math.sqrt(dx * dx + dz * dz)
+end
+
 
 -- =========================================================================
 -- [1. 하차벨 시스템 통합 관리 (모든 Point ProximityPrompt, Main.Bell, Light 일원화)]
@@ -217,6 +240,10 @@ local function getOrCreateBusBellSystem(busModel)
         normalBellUsed = false,
         specialBellUsed = false,
         lastTriggeredTime = 0,
+        lastTriggeredAtMs = nil,
+        lastTriggerReason = nil,
+        lastTriggeredPlayerName = nil,
+        lastBellType = nil,
         connectedPrompts = {},
         connectedClicks = {},
         promptSxnheRoots = {},
@@ -445,6 +472,10 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isS
     system.isRinging = true
     system.isSpecialRinging = isSpecial
     system.lastTriggeredTime = os.clock()
+    system.lastTriggeredAtMs = DateTime.now().UnixTimestampMillis
+    system.lastTriggerReason = tostring(triggerReason or "MANUAL")
+    system.lastTriggeredPlayerName = player and player.Name or "AUTO"
+    system.lastBellType = isSpecial and "special" or "normal"
 
     print(string.format("[하차벨 작동] 버스: %s, 사유: %s, 트리거: %s", busModel.Name, tostring(triggerReason), player and player.Name or "자동예약"))
 
@@ -876,20 +907,38 @@ local function collectAllMapStops()
     local allStops = {}
     local seenPositions = {}
 
-    local function addStop(stop)
+    local function addStop(stop, routeHint)
+        local position = stop.position
+        local x = tonumber(stop.x) or (position and position.X)
+        local y = tonumber(stop.y) or (position and position.Y) or 0
+        local z = tonumber(stop.z) or (position and position.Z)
+        if not x or not z then
+            return
+        end
+
         -- 고유 번호가 설정된 정류장은 위치가 조금 달라도 같은 하나의 정류장으로 표시합니다.
         local key = stop.stopId and ("id:" .. tostring(stop.stopId))
-            or string.format("pos:%.1f,%.1f", stop.x, stop.z)
+            or string.format("pos:%.1f,%.1f", x, z)
         if not seenPositions[key] then
             seenPositions[key] = true
-            table.insert(allStops, stop)
+            -- Firebase 전송용 정류장에는 Instance/Vector3를 넣지 않습니다. 노선
+            -- 계산용 Vector3는 buildFallbackRouteStops에서 다시 생성합니다.
+            table.insert(allStops, {
+                index = tonumber(stop.index) or (#allStops + 1),
+                stopId = stop.stopId ~= nil and tostring(stop.stopId) or nil,
+                name = tostring(stop.name or ("정류장 " .. tostring(#allStops + 1))),
+                route = routeHint and tostring(routeHint) or (stop.route and tostring(stop.route) or nil),
+                x = round1(x),
+                y = round1(y),
+                z = round1(z)
+            })
         end
     end
 
     -- 1. 캐시된 노선 정류장들
-    for _, stops in pairs(routeStopsCache) do
+    for cachedRouteName, stops in pairs(routeStopsCache) do
         for _, s in ipairs(stops) do
-            addStop(s)
+            addStop(s, cachedRouteName)
         end
     end
 
@@ -909,6 +958,9 @@ local function collectAllMapStops()
                     "StopId", "stopId", "StopNumber", "stopNumber", "StationId", "stationId",
                     "UniqueStopId", "uniqueStopId", "정류장고유번호", "정류장번호"
                 }, nil)
+                local stopRoute = getFirstAttribute(tagged, {
+                    "Route", "route", "ROUTE", "Line", "line", "노선", "노선번호"
+                }, nil)
                 local lowerName = tagged.Name:lower()
                 -- 단순 ArrivalSensor 같은 감지 파트는 지도 정류장으로 쓰지 않습니다.
                 -- 실제 정류장은 이름에 stop/station/정류장이 있거나 StopName/StopId 속성이 있어야 합니다.
@@ -921,7 +973,7 @@ local function collectAllMapStops()
                         x = round1(pos.X),
                         y = round1(pos.Y),
                         z = round1(pos.Z)
-                    })
+                    }, stopRoute)
                 end
             end
         end
@@ -940,65 +992,248 @@ local function collectStableMapStops()
     return lastKnownMapStops
 end
 
+-- 노선 폴더가 없거나 차량의 Route 값과 폴더명이 맞지 않을 때 BUS_STOP 태그
+-- 정류장을 노선 진행 판정용 형태로 변환합니다. Route 속성이 붙은 정류장이 하나라도
+-- 있으면 해당 노선만 사용하고, 전부 미지정일 때만 공용 정류장 순서를 사용합니다.
+local function buildFallbackRouteStops(routeName)
+    local mapStops = collectAllMapStops()
+    local routeText = tostring(routeName or "")
+    local routeNumber = routeText:match("%d+")
+    local hasScopedStops = false
+    local matchingStops = {}
+    local unscopedStops = {}
+
+    local function routeMatches(stopRoute)
+        local stopRouteText = tostring(stopRoute or "")
+        if stopRouteText == "" then return false end
+        if stopRouteText:lower() == routeText:lower() then return true end
+        local stopRouteNumber = stopRouteText:match("%d+")
+        return routeNumber ~= nil and stopRouteNumber == routeNumber
+    end
+
+    for _, stop in ipairs(mapStops) do
+        local target = unscopedStops
+        if stop.route and tostring(stop.route) ~= "" then
+            hasScopedStops = true
+            target = routeMatches(stop.route) and matchingStops or nil
+        end
+
+        if target then
+            local x = tonumber(stop.x)
+            local y = tonumber(stop.y) or 0
+            local z = tonumber(stop.z)
+            if x and z then
+                table.insert(target, {
+                    index = tonumber(stop.index) or (#target + 1),
+                    stopId = stop.stopId ~= nil and tostring(stop.stopId) or nil,
+                    name = tostring(stop.name or ("정류장 " .. tostring(#target + 1))),
+                    position = Vector3.new(x, y, z),
+                    x = x,
+                    y = y,
+                    z = z
+                })
+            end
+        end
+    end
+
+    local selectedStops = hasScopedStops and matchingStops or unscopedStops
+    table.sort(selectedStops, function(first, second)
+        return first.index < second.index
+    end)
+    return selectedStops
+end
+
+local routeFallbackNotices = {}
+
 -- =========================================================================
--- [3. 버스 앞/뒤 인식 파트를 통한 지나간 정류장 제외 & 다음 남은 정류장 산출]
+-- [3. 노선 선분 진행도와 거리 변화로 지나간 정류장 제외 & 다음 남은 정류장 산출]
 -- =========================================================================
-local busRouteProgress = {} -- [busId] = lastPassedIndex
+local busRouteProgress = {} -- [busId] = 진행 상태
+local ROUTE_CURRENT_STOP_RADIUS = 45
+local ROUTE_PASS_APPROACH_RADIUS = 110
+local ROUTE_PASS_MAX_MIN_DISTANCE = 90
+local ROUTE_PASS_CONFIRM_DISTANCE = 60
+local ROUTE_PASS_DISTANCE_GAIN = 16
+local ROUTE_PROGRESS_MAX_VALID_SPEED = 180
+local ROUTE_POLYLINE_MAX_DISTANCE = 140
+
+local function getRouteFingerprint(routeStops)
+    local first = routeStops[1]
+    local last = routeStops[#routeStops]
+    return string.format(
+        "%d|%s|%.1f|%.1f|%s|%.1f|%.1f",
+        #routeStops,
+        tostring(first and (first.stopId or first.index) or ""),
+        first and first.position.X or 0,
+        first and first.position.Z or 0,
+        tostring(last and (last.stopId or last.index) or ""),
+        last and last.position.X or 0,
+        last and last.position.Z or 0
+    )
+end
+
+-- 버스 회전값 대신 정류장들을 이은 노선 선분에 현재 위치를 투영합니다.
+-- 반환값은 정류장 배열 순서를 기준으로 한 연속 진행도(예: 3.4 = 3번과 4번 사이)입니다.
+local function estimateRouteSequenceProgress(routeStops, position, passedOrder)
+    if #routeStops < 2 then
+        return nil, math.huge
+    end
+
+    local bestProgress = nil
+    local bestDistance = math.huge
+    local bestScore = math.huge
+
+    for order = 1, #routeStops - 1 do
+        local startPosition = routeStops[order].position
+        local endPosition = routeStops[order + 1].position
+        local flatStart = Vector3.new(startPosition.X, 0, startPosition.Z)
+        local flatEnd = Vector3.new(endPosition.X, 0, endPosition.Z)
+        local flatPosition = Vector3.new(position.X, 0, position.Z)
+        local segment = flatEnd - flatStart
+        local lengthSquared = segment:Dot(segment)
+        if lengthSquared > 0.01 then
+            local rawT = (flatPosition - flatStart):Dot(segment) / lengthSquared
+            local t = math.clamp(rawT, 0, 1)
+            local closestPoint = flatStart + segment * t
+            local distance = horizontalDistance(flatPosition, closestPoint)
+            local progress = order + t
+            local score = distance
+
+            -- 교차로나 평행 노선에서 먼 구간으로 순간 이동하지 않도록, 지금까지
+            -- 확정한 순서보다 뒤로 가는 후보와 여러 정류장을 건너뛰는 후보에 벌점을 줍니다.
+            if passedOrder ~= nil then
+                if progress < passedOrder - 0.25 then
+                    score = score + 10000
+                elseif progress > passedOrder + 3.5 then
+                    score = score + (progress - passedOrder - 3.5) * 80
+                end
+            end
+
+            if score < bestScore then
+                bestScore = score
+                bestDistance = distance
+                bestProgress = progress
+            end
+        end
+    end
+
+    return bestProgress, bestDistance
+end
 
 local function calculateStopProgress(model, routeStops, frontPart, backPart, busPos)
     local busId = model:GetFullName()
     if #routeStops == 0 then
+        busRouteProgress[busId] = nil
         return nil, {}, {}
     end
 
-    local forwardVector = Vector3.new(0, 0, 1)
-    if frontPart and backPart then
-        local delta = frontPart.Position - backPart.Position
-        if delta.Magnitude > 0.05 then
-            forwardVector = delta.Unit
+    -- FRONT/BACK 태그의 위치·회전 설정이 잘못돼도 진행 판정이 흔들리지 않도록
+    -- 레이더가 실제 전송하는 버스 중심 좌표만 사용합니다.
+    local referencePos = busPos
+    local now = os.clock()
+    local routeFingerprint = getRouteFingerprint(routeStops)
+    local state = busRouteProgress[busId]
+
+    if not state or state.routeFingerprint ~= routeFingerprint then
+        local initialProgress, initialLineDistance = estimateRouteSequenceProgress(routeStops, referencePos, nil)
+        local initialPassedOrder = 0
+        if initialProgress and initialLineDistance <= ROUTE_POLYLINE_MAX_DISTANCE then
+            initialPassedOrder = math.max(0, math.floor(initialProgress - 0.12))
         end
-    else
-        forwardVector = (model.PrimaryPart and model.PrimaryPart.CFrame or model:GetPivot()).LookVector
+        state = {
+            routeFingerprint = routeFingerprint,
+            passedOrder = math.min(initialPassedOrder, #routeStops),
+            lastPosition = referencePos,
+            lastSampleAt = now,
+            approach = nil
+        }
+        busRouteProgress[busId] = state
     end
 
-    local referencePos = frontPart and frontPart.Position or busPos
+    local sampleSeconds = math.max(now - state.lastSampleAt, 0)
+    local sampleSpeed = 0
+    if sampleSeconds > 0.01 then
+        sampleSpeed = horizontalDistance(referencePos, state.lastPosition) / sampleSeconds
+    end
+    local motionIsValid = sampleSeconds <= 0.01 or sampleSpeed <= ROUTE_PROGRESS_MAX_VALID_SPEED
+    state.lastPosition = referencePos
+    state.lastSampleAt = now
+    if not motionIsValid then
+        -- 좌표 순간이동 프레임으로 여러 정류장이 한꺼번에 지나간 것으로 처리하지 않습니다.
+        state.approach = nil
+    end
 
     local closestStop = nil
     local closestDist = math.huge
+    local closestOrder = nil
 
-    for _, stop in ipairs(routeStops) do
-        local dist = (referencePos - stop.position).Magnitude
+    for order, stop in ipairs(routeStops) do
+        local dist = horizontalDistance(referencePos, stop.position)
         if dist < closestDist then
             closestDist = dist
             closestStop = stop
+            closestOrder = order
         end
     end
 
-    -- 버스가 특정 정류장 반경 45 studs 이내에 진입하면 "현재 있는 정류장"으로 판정
+    -- 가까운 정류장은 방향값과 무관하게 현재 정류장으로 확정합니다.
     local currentStop = nil
-    if closestDist <= 45 then
+    if motionIsValid
+        and closestStop
+        and closestOrder >= state.passedOrder
+        and closestDist <= ROUTE_CURRENT_STOP_RADIUS then
         currentStop = closestStop
-        busRouteProgress[busId] = math.max(busRouteProgress[busId] or 0, closestStop.index)
+        state.passedOrder = math.max(state.passedOrder, closestOrder)
+        state.approach = nil
     end
 
-    local passedThresholdIndex = busRouteProgress[busId] or 0
-    if closestStop and not currentStop then
-        local toStop = (closestStop.position - referencePos)
-        local dot = forwardVector:Dot(toStop)
-        -- 가장 가까운 정류장이 버스 진행방향 뒤쪽(-5 이하)에 있고 20 studs 이상 떨어져 있다면 통과한 것으로 처리
-        if dot < -5 and closestDist > 20 then
-            passedThresholdIndex = math.max(passedThresholdIndex, closestStop.index)
-            busRouteProgress[busId] = passedThresholdIndex
-        else
-            passedThresholdIndex = math.max(passedThresholdIndex, closestStop.index - 1)
+    if motionIsValid and not currentStop then
+        -- 1차 판정: 노선 선분 위 진행도가 다음 정류장을 충분히 넘어갔는지 확인합니다.
+        local routeProgress, lineDistance = estimateRouteSequenceProgress(routeStops, referencePos, state.passedOrder)
+        if routeProgress and lineDistance <= ROUTE_POLYLINE_MAX_DISTANCE then
+            local confirmedOrder = math.max(0, math.floor(routeProgress - 0.12))
+            if confirmedOrder > state.passedOrder then
+                state.passedOrder = math.min(confirmedOrder, #routeStops)
+                state.approach = nil
+            end
+        end
+
+        -- 2차 판정: 도로가 굽어 노선 직선에서 벗어나도 다음 정류장까지 가까워졌다가
+        -- 다시 멀어졌다면 통과로 확정합니다. 버스 회전/앞뒤 파트 방향은 사용하지 않습니다.
+        local nextOrder = state.passedOrder + 1
+        local nextStop = routeStops[nextOrder]
+        if nextStop then
+            local distance = horizontalDistance(referencePos, nextStop.position)
+            if not state.approach or state.approach.order ~= nextOrder then
+                if distance <= ROUTE_PASS_APPROACH_RADIUS then
+                    state.approach = {
+                        order = nextOrder,
+                        minimumDistance = distance,
+                        lastDistance = distance
+                    }
+                end
+            else
+                local approach = state.approach
+                approach.minimumDistance = math.min(approach.minimumDistance, distance)
+                local movedAway = approach.minimumDistance <= ROUTE_PASS_MAX_MIN_DISTANCE
+                    and distance > approach.lastDistance + 0.75
+                    and distance >= ROUTE_PASS_CONFIRM_DISTANCE
+                    and distance >= approach.minimumDistance + ROUTE_PASS_DISTANCE_GAIN
+                if movedAway then
+                    state.passedOrder = nextOrder
+                    state.approach = nil
+                else
+                    approach.lastDistance = distance
+                end
+            end
         end
     end
 
     local upcomingStops = {}
     local allStopsData = {}
 
-    for _, stop in ipairs(routeStops) do
-        local dist = (referencePos - stop.position).Magnitude
+    for order, stop in ipairs(routeStops) do
+        local dist = horizontalDistance(referencePos, stop.position)
         table.insert(allStopsData, {
             index = stop.index,
             stopId = stop.stopId,
@@ -1010,8 +1245,8 @@ local function calculateStopProgress(model, routeStops, frontPart, backPart, bus
         })
 
         -- 지나간 정류장 제외, 현재 있는 정류장 제외 -> 다음 정류장들부터만 하차 예약 대상에 포함
-        local isPassed = stop.index <= passedThresholdIndex
-        local isCurrent = currentStop and (stop.index == currentStop.index)
+        local isPassed = order <= state.passedOrder
+        local isCurrent = currentStop and order == closestOrder
         if not isPassed and not isCurrent then
             table.insert(upcomingStops, {
             index = stop.index,
@@ -1495,6 +1730,402 @@ determineIsHighFloor = function(model, taggedPart, boardingPart)
     return false -- 기본값: 저상 (false)
 end
 
+-- =========================================================================
+-- [3-1. 하차벨 점등 상태의 무정차 통과 감지 및 Firebase 기록 큐]
+-- =========================================================================
+local missedStopMonitors = {}
+local missedStopReportQueue = {}
+local missedStopSequence = 0
+local MISSED_STOP_MAX_VALID_SAMPLE_SPEED = 180
+local companyConfigWarnings = {}
+
+local function sanitizeFirebaseKey(value)
+    return tostring(value or "unknown"):gsub("[%.%#%$/%[%]]", "_")
+end
+
+local function getStopTrackingKey(stop)
+    if stop.stopId ~= nil and tostring(stop.stopId) ~= "" then
+        return "id:" .. tostring(stop.stopId)
+    end
+    return string.format("index:%s:%.1f:%.1f", tostring(stop.index or ""), stop.x or stop.position.X, stop.z or stop.position.Z)
+end
+
+local function getBusCompanyInfo(model)
+    local companyName = getFirstAttribute(model, {
+        "CompanyName", "companyName", "BusCompanyName", "busCompanyName", "회사명"
+    }, nil)
+    local companyId = getFirstAttribute(model, {
+        "CompanyId", "companyId", "BusCompanyId", "busCompanyId", "회사식별아이디", "회사ID"
+    }, nil)
+
+    if type(companyName) ~= "string" or type(companyId) ~= "string" then
+        return nil, "Bus Model의 CompanyName과 CompanyId 속성을 모두 String으로 설정해야 합니다."
+    end
+
+    companyName = companyName:match("^%s*(.-)%s*$") or ""
+    companyId = companyId:match("^%s*(.-)%s*$") or ""
+    if companyName == "" or companyId == "" then
+        return nil, "Bus Model의 CompanyName과 CompanyId 문자열은 비어 있을 수 없습니다."
+    end
+    if #companyId < 12 or #companyId > 80 or not companyId:match("^[%w_-]+$") then
+        return nil, "CompanyId는 시트 메뉴에서 생성한 12~80자 영문·숫자·밑줄·하이픈 값이어야 합니다."
+    end
+
+    return {
+        name = companyName,
+        id = companyId
+    }, nil
+end
+
+local function getBusDriverInfo(model)
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("VehicleSeat") and descendant.Occupant then
+            local character = descendant.Occupant.Parent
+            local player = character and Players:GetPlayerFromCharacter(character) or nil
+            if player then
+                return {
+                    userId = player.UserId,
+                    userName = player.Name,
+                    displayName = player.DisplayName,
+                    seatName = descendant.Name
+                }
+            end
+        end
+    end
+
+    local configuredName = getValueFromInstance(model, {
+        "DriverName", "driverName", "Driver", "driver", "BusDriver", "busDriver", "기사명", "기사"
+    }, nil)
+    local configuredUserId = getValueFromInstance(model, {
+        "DriverUserId", "driverUserId", "DriverId", "driverId", "기사UserId", "기사아이디"
+    }, nil)
+    return {
+        userId = tonumber(configuredUserId),
+        userName = configuredName and tostring(configuredName) or "미확인",
+        displayName = configuredName and tostring(configuredName) or "미확인",
+        seatName = nil
+    }
+end
+
+local function enqueueMissedStopReport(payload)
+    missedStopSequence = missedStopSequence + 1
+    local timestamp = tonumber(payload.occurredAtMs) or DateTime.now().UnixTimestampMillis
+    payload.eventId = string.format(
+        "missed-%s-%d-%d",
+        sanitizeFirebaseKey(SERVER_SESSION_ID),
+        timestamp,
+        missedStopSequence
+    )
+    payload.exportStatus = "pending"
+    payload.createdAtMs = timestamp
+
+    table.insert(missedStopReportQueue, {
+        eventId = payload.eventId,
+        companyId = sanitizeFirebaseKey(payload.company.id),
+        payload = payload,
+        attempts = 0,
+        nextAttemptAt = 0
+    })
+
+    warn(string.format(
+        "[무정차 감지] 노선 %s / 차량 %s / 정류장 %s / 최단거리 %.1f studs / 통과속도 %.1f studs/s",
+        tostring(payload.bus.route),
+        tostring(payload.bus.name),
+        tostring(payload.stop.name),
+        tonumber(payload.passage.minimumDistanceStuds) or -1,
+        tonumber(payload.passage.passSpeedStudsPerSecond) or -1
+    ))
+end
+
+-- 네트워크가 잠깐 끊겨도 감지 결과를 버리지 않고 같은 eventId 경로에 재시도합니다.
+-- PUT을 사용하므로 응답 유실 뒤 재전송되어도 Google Sheet에는 한 건만 기록됩니다.
+task.spawn(function()
+    while RunService:IsRunning() do
+        local report = missedStopReportQueue[1]
+        if report and os.clock() >= report.nextAttemptAt then
+            local success, err = pcall(function()
+                local response = HttpService:RequestAsync({
+                    Url = MISSED_STOP_ENDPOINT .. "/" .. report.companyId .. "/" .. report.eventId .. ".json",
+                    Method = "PUT",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode(report.payload)
+                })
+                if not response.Success then
+                    error(string.format("Firebase missedStops HTTP %s: %s", response.StatusCode, response.StatusMessage))
+                end
+            end)
+
+            if success then
+                print("[무정차 기록 전송 완료]", report.eventId)
+                table.remove(missedStopReportQueue, 1)
+            else
+                report.attempts = report.attempts + 1
+                report.nextAttemptAt = os.clock() + math.min(30, 2 ^ math.min(report.attempts, 5))
+                warn("[무정차 기록 전송 재시도 예정]", report.eventId, err)
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+local function updateMissedStopMonitor(model, routeName, routeStops, frontPart, busPosition, bellSystem, isHighFloor, company)
+    if #routeStops == 0 then
+        missedStopMonitors[model] = nil
+        return
+    end
+
+    local now = os.clock()
+    -- 무정차 판정도 차량 방향 파트가 아니라 실제 버스 중심의 거리 변화만 사용합니다.
+    local referencePosition = busPosition
+    local state = missedStopMonitors[model]
+    if not state or state.route ~= routeName then
+        state = {
+            route = routeName,
+            lastPosition = referencePosition,
+            lastSampleAt = now,
+            passage = nil,
+            processedStops = {}
+        }
+        missedStopMonitors[model] = state
+    end
+
+    local sampleSeconds = math.max(now - state.lastSampleAt, 0)
+    local speed = 0
+    if sampleSeconds > 0.01 then
+        speed = horizontalDistance(referencePosition, state.lastPosition) / sampleSeconds
+    end
+    state.lastPosition = referencePosition
+    state.lastSampleAt = now
+
+    -- 좌표가 순간이동하듯 튄 프레임은 통과 판정에 사용하지 않습니다.
+    if speed > MISSED_STOP_MAX_VALID_SAMPLE_SPEED then
+        state.passage = nil
+        return
+    end
+
+    local passage = state.passage
+    if not passage then
+        local candidate = nil
+        local candidateDistance = math.huge
+        for _, stop in ipairs(routeStops) do
+            local stopKey = getStopTrackingKey(stop)
+            local lastProcessedAt = state.processedStops[stopKey]
+            local distance = horizontalDistance(referencePosition, stop.position)
+            local recentlyProcessed = lastProcessedAt and (now - lastProcessedAt) < MISSED_STOP_PASS_COOLDOWN_SECONDS
+            if not recentlyProcessed
+                and distance <= MISSED_STOP_APPROACH_RADIUS
+                and distance < candidateDistance then
+                candidate = stop
+                candidateDistance = distance
+            end
+        end
+
+        if candidate then
+            passage = {
+                stop = candidate,
+                stopKey = getStopTrackingKey(candidate),
+                enteredAt = now,
+                enteredAtMs = DateTime.now().UnixTimestampMillis,
+                lastDistance = candidateDistance,
+                minimumDistance = candidateDistance,
+                enteredStopZone = candidateDistance <= MISSED_STOP_STOP_RADIUS,
+                stationaryStartedAt = nil,
+                didStop = false,
+                bellWasActive = false,
+                bell = nil
+            }
+            state.passage = passage
+        else
+            return
+        end
+    end
+
+    local distance = horizontalDistance(referencePosition, passage.stop.position)
+    passage.minimumDistance = math.min(passage.minimumDistance, distance)
+    if distance <= MISSED_STOP_STOP_RADIUS then
+        passage.enteredStopZone = true
+    end
+
+    if bellSystem.isRinging then
+        passage.bellWasActive = true
+        if not passage.bell then
+            passage.bell = {
+                bellType = bellSystem.lastBellType or (bellSystem.isSpecialRinging and "special" or "normal"),
+                triggerReason = bellSystem.lastTriggerReason or "UNKNOWN",
+                triggeredBy = bellSystem.lastTriggeredPlayerName or "UNKNOWN",
+                triggeredAtMs = bellSystem.lastTriggeredAtMs
+            }
+        end
+    end
+
+    local doorIsOpen = bellSystem.doorOpenValue and bellSystem.doorOpenValue.Value == true
+    if passage.enteredStopZone and doorIsOpen then
+        passage.didStop = true
+    elseif distance <= MISSED_STOP_STOP_RADIUS and speed <= MISSED_STOP_MAX_STOP_SPEED then
+        passage.stationaryStartedAt = passage.stationaryStartedAt or now
+        if (now - passage.stationaryStartedAt) >= MISSED_STOP_REQUIRED_DWELL_SECONDS then
+            passage.didStop = true
+        end
+    else
+        passage.stationaryStartedAt = nil
+    end
+
+    local movingAway = distance > (passage.lastDistance + 0.5)
+    local hasExited = passage.enteredStopZone
+        and distance >= MISSED_STOP_EXIT_RADIUS
+        and movingAway
+
+    if hasExited then
+        state.processedStops[passage.stopKey] = now
+        if passage.bellWasActive and not passage.didStop then
+            if not company then
+                warn(string.format("[무정차 기록 보류] 버스 %s의 회사 속성이 유효하지 않습니다.", model.Name))
+            else
+                local driver = getBusDriverInfo(model)
+                local occurredAtMs = DateTime.now().UnixTimestampMillis
+                enqueueMissedStopReport({
+                    type = "missed_stop",
+                    source = "roblox",
+                    occurredAtMs = occurredAtMs,
+                    company = company,
+                    server = {
+                        sessionId = SERVER_SESSION_ID,
+                        placeId = game.PlaceId,
+                        placeVersion = game.PlaceVersion,
+                        privateServerId = game.PrivateServerId
+                    },
+                    bus = {
+                        id = model:GetFullName(),
+                        name = model.Name,
+                        route = tostring(routeName or ""),
+                        floorType = isHighFloor and "high" or "low"
+                    },
+                    driver = driver,
+                    stop = {
+                        id = passage.stop.stopId and tostring(passage.stop.stopId) or nil,
+                        index = passage.stop.index,
+                        name = passage.stop.name,
+                        x = round1(passage.stop.position.X),
+                        y = round1(passage.stop.position.Y),
+                        z = round1(passage.stop.position.Z)
+                    },
+                    bell = passage.bell or {
+                        bellType = "unknown",
+                        triggerReason = "UNKNOWN",
+                        triggeredBy = "UNKNOWN",
+                        triggeredAtMs = nil
+                    },
+                    passage = {
+                        approachStartedAtMs = passage.enteredAtMs,
+                        minimumDistanceStuds = round1(passage.minimumDistance),
+                        passSpeedStudsPerSecond = round1(speed),
+                        observedSeconds = round1(now - passage.enteredAt),
+                        busX = round1(referencePosition.X),
+                        busY = round1(referencePosition.Y),
+                        busZ = round1(referencePosition.Z)
+                    }
+                })
+            end
+        end
+        state.passage = nil
+    else
+        passage.lastDistance = distance
+    end
+end
+
+local reservationBindingUpdatesInFlight = {}
+
+local function findReservationForBus(model, routeName)
+    local liveBusId = model:GetFullName()
+    local liveBusKey = liveBusId:gsub("[%.%#%$/%[%]]", "_")
+
+    if activeReservations[liveBusKey] then
+        return activeReservations[liveBusKey], liveBusKey
+    end
+    if activeReservations[model.Name] then
+        return activeReservations[model.Name], model.Name
+    end
+
+    -- Firebase 키는 예전 차량명으로 남아 있어도 payload의 busId가 현재 차량과
+    -- 갱신된 예약은 계속 같은 차량의 예약으로 처리합니다.
+    for reservationKey, reservation in pairs(activeReservations) do
+        if typeof(reservation) == "table" and tostring(reservation.busId or "") == liveBusId then
+            return reservation, reservationKey
+        end
+    end
+
+    -- 승차 전에 예약한 차량 모델이 탑승 시 복제·개명되면 FullName이 달라질 수
+    -- 있습니다. 실제 지정 플레이어가 이 모델에 탑승한 경우에만 같은 노선의
+    -- 승차 대기 예약 하나를 현재 차량에 결속합니다.
+    if not lastBoardedBus or lastBoardedBus.model ~= model then
+        return nil, liveBusKey
+    end
+
+    local matchedReservation = nil
+    local matchedKey = nil
+    for reservationKey, reservation in pairs(activeReservations) do
+        local isPending = typeof(reservation) == "table"
+            and (reservation.status == nil or reservation.status == "pending")
+        local isWaiting = isPending and reservation.awaitingBoarding == true
+        local sameRoute = isWaiting and tostring(reservation.route or "") == tostring(routeName or "")
+        if sameRoute then
+            if matchedReservation then
+                warn(string.format(
+                    "[하차 예약 결속 보류] 노선 %s의 승차 대기 예약이 여러 개라 차량을 확정할 수 없습니다.",
+                    tostring(routeName)
+                ))
+                return nil, liveBusKey
+            end
+            matchedReservation = reservation
+            matchedKey = reservationKey
+        end
+    end
+
+    if not matchedReservation then
+        return nil, liveBusKey
+    end
+
+    matchedReservation.busId = liveBusId
+    matchedReservation.busName = model.Name
+    matchedReservation.awaitingBoarding = false
+    matchedReservation.boardedAt = DateTime.now().UnixTimestampMillis
+
+    if not reservationBindingUpdatesInFlight[matchedKey] then
+        reservationBindingUpdatesInFlight[matchedKey] = true
+        task.spawn(function()
+            local success, err = pcall(function()
+                local response = HttpService:RequestAsync({
+                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. matchedKey .. ".json",
+                    Method = "PATCH",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({
+                        busId = liveBusId,
+                        busName = model.Name,
+                        awaitingBoarding = false,
+                        boardedAt = matchedReservation.boardedAt
+                    })
+                })
+                if not response.Success then
+                    error(string.format("Firebase reservation binding HTTP %s: %s", response.StatusCode, response.StatusMessage))
+                end
+            end)
+            reservationBindingUpdatesInFlight[matchedKey] = nil
+            if success then
+                print(string.format(
+                    "[하차 예약 차량 결속] %s -> %s (노선 %s)",
+                    tostring(matchedKey),
+                    liveBusId,
+                    tostring(routeName)
+                ))
+            else
+                warn("[하차 예약 차량 결속 실패]", err)
+            end
+        end)
+    end
+
+    return matchedReservation, matchedKey
+end
+
 local function collectBusData()
     pollReservationsAsync()
 
@@ -1522,17 +2153,36 @@ local function collectBusData()
             if routeName == "" and model then
                 routeName = tostring(model.Name:match("%d+") or "")
             end
+            local company, companyError = getBusCompanyInfo(model)
+            if not company then
+                if companyConfigWarnings[model] ~= companyError then
+                    companyConfigWarnings[model] = companyError
+                    warn(string.format("[회사별 시트 연동 비활성] 버스 %s: %s", model.Name, companyError))
+                end
+            else
+                companyConfigWarnings[model] = nil
+            end
 
             -- 하차벨 시스템 초기화 (ProximityPrompt 등 연결)
             local bellSystem = getOrCreateBusBellSystem(model)
 
             -- 노선 정류장 및 다음 남은 정류장 계산
             local routeStops = loadRouteStops(routeName)
+            if #routeStops == 0 then
+                routeStops = buildFallbackRouteStops(routeName)
+                if #routeStops > 0 and not routeFallbackNotices[routeName] then
+                    routeFallbackNotices[routeName] = true
+                    warn(string.format(
+                        "[노선 정류장 대체 연결] 노선 %s: 노선 폴더 대신 BUS_STOP 태그 정류장 %d개를 사용합니다.",
+                        tostring(routeName),
+                        #routeStops
+                    ))
+                end
+            end
             local currentStop, upcomingStops, allStops = calculateStopProgress(model, routeStops, frontPart, backPart, pos)
 
             -- 하차 예약 감지 및 자동 트리거 검사
-            local busKey = model:GetFullName():gsub("[%.%#%$/%[%]]", "_")
-            local reservation = activeReservations[busKey] or activeReservations[model.Name]
+            local reservation, reservationKey = findReservationForBus(model, routeName)
             if reservation and (reservation.status == "pending" or reservation.status == nil) then
                 local targetIndex = tonumber(reservation.targetStopIndex)
                 local targetStopId = reservation.targetStopId and tostring(reservation.targetStopId) or nil
@@ -1560,7 +2210,7 @@ local function collectBusData()
 
                 if targetStop then
                     local referencePos = frontPart and frontPart.Position or pos
-                    local distToTarget = (referencePos - targetStop.position).Magnitude
+                    local distToTarget = horizontalDistance(referencePos, targetStop.position)
                     if distToTarget <= ARRIVAL_TRIGGER_DISTANCE then
                         -- 이미 게임 하차벨이 켜진 차량은 예약 도착으로 다시 울리지 않습니다.
                         -- 예약 상태만 triggered로 바꿔 앱의 진동/알림은 계속 전달합니다.
@@ -1575,7 +2225,7 @@ local function collectBusData()
                         task.spawn(function()
                             pcall(function()
                                 HttpService:RequestAsync({
-                                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. busKey .. "/status.json",
+                                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. reservationKey .. "/status.json",
                                     Method = "PUT",
                                     Headers = { ["Content-Type"] = "application/json" },
                                     Body = HttpService:JSONEncode("triggered")
@@ -1585,6 +2235,9 @@ local function collectBusData()
                     end
                 end
             end
+
+            -- 기존 벨/예약 로직은 건드리지 않고, 현재 상태를 읽어 무정차 통과만 별도로 기록합니다.
+            updateMissedStopMonitor(model, routeName, routeStops, frontPart, pos, bellSystem, isHighFloor, company)
 
             -- 몇 초 후 자동 소등이 아닌, 게임 내 하차벨 신호(라이트 소등 등) 감지 시 소등 및 Firebase 전송
             if bellSystem.isRinging and isGameBellTurnedOff(bellSystem) then
@@ -1608,6 +2261,8 @@ local function collectBusData()
                 upcomingStops = upcomingStops,
                 allStops = allStops,
                 isBellRinging = bellSystem.isRinging == true,
+                companyName = company and company.name or nil,
+                companyId = company and company.id or nil,
                 timestamp = DateTime.now().UnixTimestampMillis
             })
         end
@@ -1959,7 +2614,6 @@ local function findBusForPlayer(player)
     return nil, nil, nil
 end
 
-local lastBoardedBus = nil
 local lastBoardingReportedBus = nil
 local BOARDING_GRACE_PERIOD_SEC = 1.0 -- 버스에서 내리면 정확히 1초 뒤에 연동 해제
 

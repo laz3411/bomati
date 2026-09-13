@@ -419,7 +419,7 @@
       transform: translateX(-50%) translateY(0);
     }
 
-    /* APK/WebView용 데모 로그인과 계정 전환 UI */
+    /* Firebase Authentication 로그인과 계정 UI */
     .demo-login {
       position: absolute;
       inset: 0;
@@ -455,7 +455,14 @@
     .login-submit {
       min-height: 48px; border: 0; border-radius: 12px; background: #0284c7; color: #fff; font-size: 15px; font-weight: 800; cursor: pointer;
     }
+    .login-submit:disabled { opacity: .55; cursor: wait; }
     .login-error { min-height: 16px; color: #fda4af; font-size: 12px; }
+    .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 17px; padding: 4px; border-radius: 12px; background: #0b1220; }
+    .auth-tab { min-height: 38px; border: 0; border-radius: 9px; background: transparent; color: #94a3b8; font-size: 13px; font-weight: 800; cursor: pointer; }
+    .auth-tab.active { background: #1e3a5f; color: #e0f2fe; box-shadow: 0 3px 10px rgba(0,0,0,.24); }
+    .auth-signup-only.hidden { display: none; }
+    .terms-check { align-items: flex-start; line-height: 1.45; }
+    .terms-link { padding: 0; border: 0; background: transparent; color: #7dd3fc; font: inherit; font-weight: 800; text-decoration: underline; cursor: pointer; }
     .demo-profile-list { display: grid; gap: 10px; margin-top: 18px; }
     .demo-profile-btn {
       width: 100%; min-height: 64px; padding: 11px 13px; border: 1px solid rgba(148, 163, 184, .28);
@@ -479,7 +486,33 @@
     }
     .account-menu.hidden { display: none; }
     .account-menu-name { padding: 4px 3px 10px; color: #cbd5e1; font-size: 12px; }
-    .account-logout { width: 100%; min-height: 38px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 9px; background: rgba(127, 29, 29, .25); color: #fecaca; font-size: 13px; font-weight: 700; cursor: pointer; }
+    .account-action { width: 100%; min-height: 38px; margin-top: 6px; border: 1px solid rgba(125, 211, 252, .3); border-radius: 9px; background: rgba(30, 58, 95, .3); color: #dbeafe; font-size: 13px; font-weight: 700; cursor: pointer; }
+    .account-accessibility { border-color: rgba(52, 211, 153, .5); background: rgba(6, 78, 59, .32); color: #a7f3d0; }
+    .account-logout, .account-delete { border-color: rgba(248, 113, 113, .45); background: rgba(127, 29, 29, .25); color: #fecaca; }
+    .account-delete { background: transparent; }
+
+    .modal-layer { position: absolute; inset: 0; z-index: 120; display: grid; place-items: center; padding: 18px; background: rgba(2, 6, 23, .78); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    .modal-layer.hidden { display: none; }
+    .modal-card { width: min(100%, 440px); max-height: min(82dvh, 680px); overflow-y: auto; padding: 22px; border: 1px solid rgba(125, 211, 252, .32); border-radius: 20px; background: #0f172a; color: #e2e8f0; box-shadow: 0 24px 60px rgba(0,0,0,.55); }
+    .modal-card h2 { margin-bottom: 8px; color: #f8fafc; font-size: 20px; }
+    .terms-meta { margin-bottom: 16px; color: #7dd3fc; font-size: 11px; font-weight: 800; }
+    .terms-content { display: grid; gap: 14px; color: #cbd5e1; font-size: 12px; line-height: 1.65; }
+    .terms-content h3 { margin-bottom: 3px; color: #f1f5f9; font-size: 13px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    .modal-btn { min-height: 42px; padding: 0 15px; border: 1px solid rgba(148,163,184,.3); border-radius: 10px; background: #1e293b; color: #e2e8f0; font-weight: 800; cursor: pointer; }
+    .modal-btn.primary { border-color: #0284c7; background: #0284c7; color: #fff; }
+    .modal-btn.danger { border-color: #be123c; background: #be123c; color: #fff; }
+    .verification-notice { margin: 14px 0; padding: 12px; border: 1px solid rgba(56, 189, 248, .28); border-radius: 12px; background: rgba(3, 105, 161, .14); color: #bae6fd; font-size: 12px; line-height: 1.55; }
+    .verification-consent { display: flex; align-items: flex-start; gap: 9px; padding: 11px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 11px; background: rgba(30, 41, 59, .58); color: #dbeafe; font-size: 12px; line-height: 1.5; }
+    .verification-consent input { margin-top: 2px; accent-color: #0ea5e9; }
+    .verification-terms { padding: 12px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 11px; color: #cbd5e1; font-size: 12px; line-height: 1.6; }
+    .verification-terms summary { color: #7dd3fc; font-weight: 800; cursor: pointer; }
+    .verification-terms section { margin-top: 11px; }
+    .verification-terms h3 { margin-bottom: 3px; color: #f1f5f9; font-size: 13px; }
+    .verification-active { padding: 16px; border: 1px solid rgba(52, 211, 153, .42); border-radius: 14px; background: rgba(6, 78, 59, .24); }
+    .verification-active strong { display: block; margin-bottom: 7px; color: #a7f3d0; font-size: 16px; }
+    .verification-active p { color: #cbd5e1; font-size: 12px; line-height: 1.6; }
+    #disabilityVerifiedPanel.hidden, #disabilityVerificationFormPanel.hidden { display: none; }
 
     @media (max-width: 480px) {
       .firebase-status { max-width: calc(100vw - 24px); font-size: 10px; }
@@ -497,16 +530,19 @@
 
   <!-- 웹뷰(APK) 및 file:// 호환 Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
 </head>
 <body>
   <div id="viewport">
     <canvas id="mapCanvas"></canvas>
-    <div id="firebaseStatus" class="firebase-status">Firebase 연결 확인 중...</div>
     <button id="demoAccountBtn" class="demo-account-btn" type="button" style="display:none;"></button>
     <div id="accountMenu" class="account-menu hidden">
       <div id="accountMenuName" class="account-menu-name"></div>
-      <button id="logoutBtn" class="account-logout" type="button">로그아웃</button>
+      <button id="disabilityVerificationBtn" class="account-action account-accessibility" type="button">장애인 하차벨 기능 인증</button>
+      <button id="accountTermsBtn" class="account-action" type="button">이용약관 보기</button>
+      <button id="logoutBtn" class="account-action account-logout" type="button">로그아웃</button>
+      <button id="deleteAccountBtn" class="account-action account-delete" type="button">회원 탈퇴</button>
     </div>
 
     <!-- 근처 버스 알림 플로팅 버튼 -->
@@ -558,24 +594,133 @@
     <!-- 자유 이동 모드 토스트 -->
     <div id="toast" class="toast">자유 이동 모드 (과녁 클릭 시 내 위치 복귀)</div>
 
-    <!-- 해커톤 시연용 로컬 로그인: 실제 서버 인증·건강정보 수집 없음 -->
+    <!-- Firebase Authentication 로그인 -->
     <div id="demoLogin" class="demo-login" role="dialog" aria-modal="true" aria-label="로그인">
       <div class="demo-login-card">
-        <div class="demo-login-eyebrow">BOMATI DEMO ACCESS</div>
-        <h1 class="demo-login-title">로그인</h1>
-        <p class="demo-login-copy">로그인 상태는 이 기기에 유지됩니다.</p>
-        <form id="demoLoginForm" class="login-form">
-          <label class="login-field">아이디
-            <input id="loginUserId" class="login-input" type="text" inputmode="text" autocomplete="username" placeholder="아이디 입력" required maxlength="24">
+        <div class="demo-login-eyebrow">BOMATI ACCOUNT</div>
+        <h1 id="authTitle" class="demo-login-title">로그인</h1>
+        <p id="authCopy" class="demo-login-copy">Firebase 계정으로 안전하게 로그인합니다.</p>
+        <div class="auth-tabs" role="tablist" aria-label="계정 방식 선택">
+          <button id="loginModeBtn" class="auth-tab active" type="button" role="tab" aria-selected="true">로그인</button>
+          <button id="signupModeBtn" class="auth-tab" type="button" role="tab" aria-selected="false">회원가입</button>
+        </div>
+        <form id="authForm" class="login-form">
+          <label class="login-field auth-signup-only hidden">이름
+            <input id="authDisplayName" class="login-input" type="text" autocomplete="name" placeholder="표시할 이름" maxlength="24">
+          </label>
+          <label class="login-field">이메일
+            <input id="authEmail" class="login-input" type="email" inputmode="email" autocomplete="username" placeholder="example@email.com" required maxlength="120">
           </label>
           <label class="login-field">비밀번호
-            <input id="loginPassword" class="login-input" type="password" inputmode="numeric" autocomplete="current-password" placeholder="비밀번호 입력" required maxlength="32">
+            <input id="authPassword" class="login-input" type="password" autocomplete="current-password" placeholder="6자 이상 입력" required minlength="6" maxlength="72">
           </label>
-          <label class="login-accessibility"><input id="loginAccessibility" type="checkbox"> 거동이 불편한 장애인임을 확인합니다 · 장애인 하차벨 기능 사용하기</label>
-          <div id="loginError" class="login-error" role="alert"></div>
-          <button class="login-submit" type="submit">로그인</button>
+          <label class="login-field auth-signup-only hidden">비밀번호 확인
+            <input id="authPasswordConfirm" class="login-input" type="password" autocomplete="new-password" placeholder="비밀번호 다시 입력" minlength="6" maxlength="72">
+          </label>
+          <label class="login-accessibility terms-check auth-signup-only hidden">
+            <input id="termsAccepted" type="checkbox">
+            <span><button id="openTermsFromSignup" class="terms-link" type="button">이용약관</button> 및 개인정보 처리 안내에 동의합니다. (필수)</span>
+          </label>
+          <div id="authError" class="login-error" role="alert"></div>
+          <button id="authSubmitBtn" class="login-submit" type="submit">로그인</button>
         </form>
-        <p class="demo-login-note">해커톤 데모 계정: <b>bomati / 1234</b> 또는 <b>mobility / 1234</b>. 체크는 시연용 본인 확인이며 실제 장애인 인증·건강정보는 저장하지 않습니다.</p>
+        <p class="demo-login-note">비밀번호는 BOMATI 데이터베이스에 저장하지 않으며 Firebase Authentication에서 관리합니다.</p>
+      </div>
+    </div>
+
+    <div id="termsModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="termsTitle">
+      <div class="modal-card">
+        <h2 id="termsTitle">BOMATI 이용약관</h2>
+        <div class="terms-meta">시행일 2026년 9월 13일 · 버전 1.0</div>
+        <div class="terms-content">
+          <section><h3>1. 서비스 목적</h3><p>BOMATI는 버스 위치 확인, 하차 예약 및 하차 알림을 제공하는 시뮬레이션 기반 서비스입니다. 실제 교통 상황과 차이가 발생할 수 있습니다.</p></section>
+          <section><h3>2. 계정 이용</h3><p>회원은 본인의 이메일로 계정을 생성하며 계정과 비밀번호를 안전하게 관리해야 합니다. 타인의 계정을 무단으로 이용해서는 안 됩니다.</p></section>
+          <section><h3>3. 위치 및 이용정보</h3><p>서비스 제공을 위해 게임 내 위치, 선택한 버스·정류장, 하차 예약 상태를 처리할 수 있습니다. 비밀번호는 Firebase Authentication에서 관리하며 BOMATI Realtime Database에 저장하지 않습니다.</p></section>
+          <section><h3>4. 서비스 제한</h3><p>네트워크, Firebase 또는 Roblox 상태에 따라 위치와 알림이 지연될 수 있습니다. 안전과 실제 하차 판단을 앱 알림에만 의존해서는 안 됩니다.</p></section>
+          <section><h3>5. 회원 탈퇴</h3><p>회원은 계정 메뉴에서 탈퇴할 수 있습니다. 탈퇴 시 Firebase 인증 계정과 계정 프로필이 삭제되며 복구할 수 없습니다.</p></section>
+        </div>
+        <div class="modal-actions"><button id="closeTermsBtn" class="modal-btn primary" type="button">확인</button></div>
+      </div>
+    </div>
+
+    <div id="disabilityVerificationModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="disabilityVerificationTitle">
+      <div class="modal-card">
+        <h2 id="disabilityVerificationTitle">거동 불편 장애인 인증</h2>
+        <div class="terms-meta">장애인 하차벨 기능 약관 버전 1.0 · 시행일 2026년 9월 13일</div>
+
+        <div id="disabilityVerificationFormPanel">
+          <p class="verification-notice">해커톤 시연용 인증입니다. 정부기관이나 복지카드 발급기관에 조회하지 않으며 공식 장애인 인증을 대신하지 않습니다. 아래 증빙 정보는 현재 화면에서 형식만 확인하고 Firebase로 전송하거나 저장하지 않습니다.</p>
+          <form id="disabilityVerificationForm" class="login-form">
+            <label class="login-field">증빙 서류의 성명
+              <input id="disabilityLegalName" class="login-input" type="text" autocomplete="name" required minlength="2" maxlength="40" placeholder="본인 성명">
+            </label>
+            <label class="login-field">증빙 유형
+              <select id="disabilityDocumentType" class="login-input" required>
+                <option value="">선택하세요</option>
+                <option value="welfare_card">장애인등록증·복지카드</option>
+                <option value="disability_certificate">장애인증명서</option>
+                <option value="mobility_certificate">보행상 장애 확인 서류</option>
+              </select>
+            </label>
+            <label class="login-field">증빙 식별번호 마지막 4자리
+              <input id="disabilityDocumentLast4" class="login-input" type="text" autocomplete="off" required minlength="4" maxlength="4" placeholder="마지막 4자리">
+            </label>
+            <label class="verification-consent">
+              <input id="mobilityEligibilityConfirmed" type="checkbox" required>
+              <span>거동이 불편하여 저상버스 이용 시 장애인 하차벨 지원이 필요하며, 본인 정보로 신청합니다.</span>
+            </label>
+            <details class="verification-terms">
+              <summary>장애인 하차벨 기능 약관 및 민감정보 안내 보기</summary>
+              <section><h3>1. 기능 목적</h3><p>인증이 활성화된 계정이 저상버스 하차 예약 또는 지금 하차하기를 사용하면 일반 벨 대신 장애인 하차벨 신호를 보냅니다.</p></section>
+              <section><h3>2. 저장 항목</h3><p>Firebase에는 계정 UID, 인증 활성 상태, 무작위 인증 ID, 약관 버전과 동의 시각만 저장합니다. 이 화면에 입력한 성명, 증빙 유형 및 식별번호 마지막 4자리는 형식 확인 후 즉시 폐기하며 서버에 저장하지 않습니다.</p></section>
+              <section><h3>3. 보유 및 취소</h3><p>인증 상태는 사용자가 인증을 취소하거나 회원 탈퇴할 때까지 사용합니다. 계정 메뉴에서 언제든 인증을 취소할 수 있으며 취소 즉시 인증 상세정보와 동의 이력을 삭제하고 일반 하차벨 방식으로 전환합니다.</p></section>
+              <section><h3>4. 동의 거부</h3><p>별도 동의를 거부할 수 있으며 이 경우 일반 하차벨과 기본 지도 기능은 계속 이용할 수 있지만 장애인 하차벨 자동 선택 기능은 사용할 수 없습니다.</p></section>
+              <section><h3>5. 시연 범위</h3><p>현재 버전은 공식 행정정보 조회가 없는 시연용입니다. 실제 서비스에서는 관계기관 인증 연계, 법률 검토, 접근통제 및 개인정보 보호 절차가 추가로 필요합니다.</p></section>
+            </details>
+            <label class="verification-consent">
+              <input id="disabilityFeatureTermsAccepted" type="checkbox" required>
+              <span>장애인 하차벨 기능 약관에 동의합니다. (필수)</span>
+            </label>
+            <label class="verification-consent">
+              <input id="disabilitySensitiveDataAccepted" type="checkbox" required>
+              <span>거동 불편 장애인 인증 상태를 기능 제공 목적으로 처리하는 데 별도로 동의합니다. (필수)</span>
+            </label>
+            <div id="disabilityVerificationError" class="login-error" role="alert"></div>
+            <div class="modal-actions">
+              <button id="cancelDisabilityVerificationBtn" class="modal-btn" type="button">닫기</button>
+              <button id="submitDisabilityVerificationBtn" class="modal-btn primary" type="submit">인증 완료</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="disabilityVerifiedPanel" class="hidden">
+          <div class="verification-active">
+            <strong>장애인 하차벨 기능 사용 중</strong>
+            <p>저상버스에서 하차 예약 또는 지금 하차하기를 사용하면 장애인 하차벨이 선택됩니다.</p>
+            <p id="disabilityVerificationMeta"></p>
+          </div>
+          <div class="modal-actions">
+            <button id="closeDisabilityVerifiedBtn" class="modal-btn" type="button">닫기</button>
+            <button id="revokeDisabilityVerificationBtn" class="modal-btn danger" type="button">인증 취소</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="deleteAccountModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="deleteAccountTitle">
+      <div class="modal-card">
+        <h2 id="deleteAccountTitle">회원 탈퇴</h2>
+        <p class="demo-login-copy">계정과 프로필이 영구 삭제됩니다. 본인 확인을 위해 현재 비밀번호를 입력하세요.</p>
+        <form id="deleteAccountForm" class="login-form">
+          <label class="login-field">현재 비밀번호
+            <input id="deleteAccountPassword" class="login-input" type="password" autocomplete="current-password" required minlength="6" maxlength="72">
+          </label>
+          <div id="deleteAccountError" class="login-error" role="alert"></div>
+          <div class="modal-actions">
+            <button id="cancelDeleteAccountBtn" class="modal-btn" type="button">취소</button>
+            <button id="confirmDeleteAccountBtn" class="modal-btn danger" type="submit">영구 탈퇴</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
@@ -584,7 +729,32 @@
     // ==========================================
     // 1. 고정 설정 & 발표용 타겟 사용자
     // ==========================================
-    const FIREBASE_DB_URL = "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app";
+    // Firebase 웹 클라이언트 설정은 공개 식별값이며 관리자 비밀키가 아닙니다.
+    const firebaseConfig = {
+      apiKey: "AIzaSyBiQGMSVrWkPKn1mlN1s5pw49VDuipHj0E",
+      authDomain: "bumati.firebaseapp.com",
+      databaseURL: "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "bumati",
+      storageBucket: "bumati.firebasestorage.app",
+      messagingSenderId: "772532443063",
+      appId: "1:772532443063:web:fe41f13d31bcf669f6ba32",
+      measurementId: "G-Y7MB8BD87S"
+    };
+    const FIREBASE_DB_URL = firebaseConfig.databaseURL;
+    const TERMS_VERSION = "1.0";
+    const DISABILITY_BELL_TERMS_VERSION = "1.0";
+    let firebaseApp = null;
+    let auth = null;
+    let db = null;
+    let firebaseBootstrapError = null;
+    try {
+      firebaseApp = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      db = firebase.database();
+    } catch (error) {
+      firebaseBootstrapError = error;
+      console.error('[Firebase] 초기화 실패:', error);
+    }
 
     // Roblox의 실제 영어 사용자명(Player.Name)을 넣으세요. 표시명(DisplayName)은 사용하지 않습니다.
     // 이 계정만 지도에 표시됩니다.
@@ -636,17 +806,80 @@
     applyViewport();
 
     // ==========================================
-    // 2-1. APK용 로컬 데모 로그인 (서버 인증/개인정보 미사용)
+    // 2-1. Firebase Authentication 계정
     // ==========================================
-    const DEMO_ACCOUNTS = {
-      bomati: { password: '1234', name: '김보마', accessibility: false },
-      mobility: { password: '1234', name: '이봄', accessibility: false }
-    };
     let demoProfile = null;
+    let authMode = 'login';
+    let authProfileRef = null;
     const demoLoginEl = document.getElementById('demoLogin');
     const demoAccountBtn = document.getElementById('demoAccountBtn');
     const accountMenuEl = document.getElementById('accountMenu');
     const accountMenuNameEl = document.getElementById('accountMenuName');
+    const authForm = document.getElementById('authForm');
+    const authErrorEl = document.getElementById('authError');
+    const authSubmitBtn = document.getElementById('authSubmitBtn');
+    const loginModeBtn = document.getElementById('loginModeBtn');
+    const signupModeBtn = document.getElementById('signupModeBtn');
+    const termsModal = document.getElementById('termsModal');
+    const deleteAccountModal = document.getElementById('deleteAccountModal');
+    const disabilityVerificationModal = document.getElementById('disabilityVerificationModal');
+    const disabilityVerificationBtn = document.getElementById('disabilityVerificationBtn');
+    const disabilityVerificationForm = document.getElementById('disabilityVerificationForm');
+    const disabilityVerificationFormPanel = document.getElementById('disabilityVerificationFormPanel');
+    const disabilityVerifiedPanel = document.getElementById('disabilityVerifiedPanel');
+    const disabilityVerificationError = document.getElementById('disabilityVerificationError');
+
+    function getFirebaseAuthErrorMessage(error) {
+      const code = String(error && error.code || '');
+      const messages = {
+        'auth/invalid-email': '이메일 형식이 올바르지 않습니다.',
+        'auth/missing-password': '비밀번호를 입력하세요.',
+        'auth/weak-password': '비밀번호는 6자 이상이어야 합니다.',
+        'auth/email-already-in-use': '이미 가입된 이메일입니다.',
+        'auth/user-not-found': '가입되지 않은 이메일입니다.',
+        'auth/wrong-password': '이메일 또는 비밀번호를 확인하세요.',
+        'auth/invalid-credential': '이메일 또는 비밀번호를 확인하세요.',
+        'auth/too-many-requests': '요청이 너무 많습니다. 잠시 후 다시 시도하세요.',
+        'auth/network-request-failed': '네트워크 연결을 확인하세요.',
+        'auth/requires-recent-login': '보안을 위해 다시 로그인한 후 탈퇴해 주세요.',
+        'auth/unauthorized-domain': 'Firebase Authentication 승인 도메인 설정이 필요합니다.',
+        'auth/operation-not-allowed': 'Firebase에서 이메일/비밀번호 로그인을 활성화해 주세요.',
+        'auth/configuration-not-found': 'Firebase Authentication을 시작하고 이메일/비밀번호 로그인을 활성화해 주세요.'
+      };
+      return messages[code] || String(error && error.message || '계정 처리 중 오류가 발생했습니다.');
+    }
+
+    function setAuthBusy(busy) {
+      if (authSubmitBtn) authSubmitBtn.disabled = busy;
+      if (loginModeBtn) loginModeBtn.disabled = busy;
+      if (signupModeBtn) signupModeBtn.disabled = busy;
+    }
+
+    function setAuthMode(mode) {
+      authMode = mode === 'signup' ? 'signup' : 'login';
+      const isSignup = authMode === 'signup';
+      document.querySelectorAll('.auth-signup-only').forEach((element) => element.classList.toggle('hidden', !isSignup));
+      if (loginModeBtn) {
+        loginModeBtn.classList.toggle('active', !isSignup);
+        loginModeBtn.setAttribute('aria-selected', String(!isSignup));
+      }
+      if (signupModeBtn) {
+        signupModeBtn.classList.toggle('active', isSignup);
+        signupModeBtn.setAttribute('aria-selected', String(isSignup));
+      }
+      document.getElementById('authTitle').textContent = isSignup ? '회원가입' : '로그인';
+      document.getElementById('authCopy').textContent = isSignup
+        ? '이용약관에 동의하고 BOMATI 계정을 만듭니다.'
+        : 'Firebase 계정으로 안전하게 로그인합니다.';
+      if (authSubmitBtn) authSubmitBtn.textContent = isSignup ? '동의하고 회원가입' : '로그인';
+      const displayNameInput = document.getElementById('authDisplayName');
+      const confirmInput = document.getElementById('authPasswordConfirm');
+      const termsInput = document.getElementById('termsAccepted');
+      if (displayNameInput) displayNameInput.required = isSignup;
+      if (confirmInput) confirmInput.required = isSignup;
+      if (termsInput) termsInput.required = isSignup;
+      if (authErrorEl) authErrorEl.textContent = '';
+    }
 
     function renderDemoProfile() {
       if (!demoProfile) return;
@@ -655,70 +888,347 @@
         demoAccountBtn.style.display = 'block';
         demoAccountBtn.textContent = `${demoProfile.accessibility ? '♿ ' : '👤 '}${demoProfile.name}`;
       }
-      if (accountMenuNameEl) accountMenuNameEl.textContent = `${demoProfile.userId} · ${demoProfile.accessibility ? '장애인 하차벨 기능 사용 가능' : '일반 하차벨'}`;
+      if (accountMenuNameEl) accountMenuNameEl.textContent = `${demoProfile.email} · ${demoProfile.accessibility ? '장애인 하차벨 기능 사용 가능' : '일반 하차벨'}`;
+      renderDisabilityVerificationState();
     }
 
     function openLogin() {
       if (accountMenuEl) accountMenuEl.classList.add('hidden');
       if (demoLoginEl) demoLoginEl.classList.remove('hidden');
-      const userId = document.getElementById('loginUserId');
-      if (userId) setTimeout(() => userId.focus(), 120);
+      const emailInput = document.getElementById('authEmail');
+      if (emailInput) setTimeout(() => emailInput.focus(), 120);
     }
 
-    function logoutDemoAccount() {
+    function clearAuthenticatedProfile() {
+      if (authProfileRef) {
+        authProfileRef.off();
+        authProfileRef = null;
+      }
       demoProfile = null;
-      try { localStorage.removeItem('bomati_demo_session'); } catch (e) {}
       if (demoAccountBtn) demoAccountBtn.style.display = 'none';
       if (accountMenuEl) accountMenuEl.classList.add('hidden');
-      const loginForm = document.getElementById('demoLoginForm');
-      if (loginForm) loginForm.reset();
-      openLogin();
+      if (authForm) authForm.reset();
     }
 
-    try {
-      const savedSession = JSON.parse(localStorage.getItem('bomati_demo_session') || 'null');
-      if (savedSession && savedSession.userId && typeof savedSession.accessibility === 'boolean') {
-        // 예전 '이동지원 모드' 세션은 장애인 하차벨 인증으로 승계하지 않습니다.
-        demoProfile = Object.assign({}, savedSession, {
-          accessibility: savedSession.disabilityBellVerified === true
-        });
+    async function logoutFirebaseAccount() {
+      if (!auth) return;
+      try {
+        await auth.signOut();
+        showToast('로그아웃되었습니다.');
+      } catch (error) {
+        showToast(getFirebaseAuthErrorMessage(error));
       }
-    } catch (e) {}
-    if (demoProfile) renderDemoProfile();
+    }
 
-    const loginForm = document.getElementById('demoLoginForm');
-    if (loginForm) {
-      loginForm.addEventListener('submit', (event) => {
+    if (loginModeBtn) loginModeBtn.addEventListener('click', () => setAuthMode('login'));
+    if (signupModeBtn) signupModeBtn.addEventListener('click', () => setAuthMode('signup'));
+
+    if (authForm) {
+      authForm.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const userId = String(document.getElementById('loginUserId').value || '').trim().toLowerCase();
-        const password = String(document.getElementById('loginPassword').value || '');
-        const accessibility = document.getElementById('loginAccessibility').checked;
-        const errorEl = document.getElementById('loginError');
-        const account = DEMO_ACCOUNTS[userId];
-        if (!account || account.password !== password) {
-          if (errorEl) errorEl.textContent = '아이디 또는 비밀번호를 확인하세요.';
+        if (!auth || !db) {
+          if (authErrorEl) authErrorEl.textContent = getFirebaseAuthErrorMessage(firebaseBootstrapError);
           return;
         }
-        demoProfile = {
-          userId,
-          name: account.name,
-          // 시연용 본인 확인을 체크한 계정만 저상버스의 장애인(B) 하차벨을 사용합니다.
-          accessibility,
-          disabilityBellVerified: accessibility
-        };
-        try { localStorage.setItem('bomati_demo_session', JSON.stringify(demoProfile)); } catch (e) {}
-        if (errorEl) errorEl.textContent = '';
-        renderDemoProfile();
-        showToast(`${demoProfile.name}님, 로그인되었습니다.`);
+        const email = String(document.getElementById('authEmail').value || '').trim().toLowerCase();
+        const password = String(document.getElementById('authPassword').value || '');
+        const displayName = String(document.getElementById('authDisplayName').value || '').trim();
+        const passwordConfirm = String(document.getElementById('authPasswordConfirm').value || '');
+        const accepted = document.getElementById('termsAccepted').checked;
+
+        if (authMode === 'signup' && displayName.length < 2) {
+          if (authErrorEl) authErrorEl.textContent = '이름을 2자 이상 입력하세요.';
+          return;
+        }
+        if (authMode === 'signup' && password !== passwordConfirm) {
+          if (authErrorEl) authErrorEl.textContent = '비밀번호 확인이 일치하지 않습니다.';
+          return;
+        }
+        if (authMode === 'signup' && !accepted) {
+          if (authErrorEl) authErrorEl.textContent = '회원가입하려면 이용약관에 동의해야 합니다.';
+          return;
+        }
+
+        setAuthBusy(true);
+        if (authErrorEl) authErrorEl.textContent = '';
+        try {
+          await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+          if (authMode === 'signup') {
+            const credential = await auth.createUserWithEmailAndPassword(email, password);
+            await credential.user.updateProfile({ displayName });
+            await db.ref(`users/${credential.user.uid}`).set({
+              displayName,
+              termsVersion: TERMS_VERSION,
+              termsAcceptedAt: firebase.database.ServerValue.TIMESTAMP,
+              disabilityBellVerified: false,
+              createdAt: firebase.database.ServerValue.TIMESTAMP
+            });
+            showToast(`${displayName}님, 회원가입이 완료되었습니다.`);
+          } else {
+            await auth.signInWithEmailAndPassword(email, password);
+            showToast('로그인되었습니다.');
+          }
+          authForm.reset();
+        } catch (error) {
+          console.error('[Firebase Auth] 계정 처리 실패:', error);
+          if (authErrorEl) authErrorEl.textContent = getFirebaseAuthErrorMessage(error);
+        } finally {
+          setAuthBusy(false);
+        }
       });
     }
+
     if (demoAccountBtn) {
       demoAccountBtn.addEventListener('click', () => {
         if (accountMenuEl) accountMenuEl.classList.toggle('hidden');
       });
     }
     const logoutBtn = document.getElementById('logoutBtn');
-    if (logoutBtn) logoutBtn.addEventListener('click', logoutDemoAccount);
+    if (logoutBtn) logoutBtn.addEventListener('click', logoutFirebaseAccount);
+
+    function renderDisabilityVerificationState() {
+      const isVerified = !!(demoProfile && demoProfile.disabilityBellVerified);
+      if (disabilityVerificationBtn) {
+        disabilityVerificationBtn.textContent = isVerified
+          ? '장애인 하차벨 인증 관리·취소'
+          : '장애인 하차벨 기능 인증';
+      }
+      if (disabilityVerificationFormPanel) disabilityVerificationFormPanel.classList.toggle('hidden', isVerified);
+      if (disabilityVerifiedPanel) disabilityVerifiedPanel.classList.toggle('hidden', !isVerified);
+
+      const meta = document.getElementById('disabilityVerificationMeta');
+      if (meta) {
+        const verifiedAt = Number(demoProfile && demoProfile.disabilityVerification && demoProfile.disabilityVerification.verifiedAt);
+        const dateLabel = Number.isFinite(verifiedAt) && verifiedAt > 0
+          ? new Date(verifiedAt).toLocaleString('ko-KR')
+          : '확인 중';
+        meta.textContent = isVerified
+          ? `인증 시각: ${dateLabel} · 약관 ${demoProfile.disabilityBellTermsVersion || DISABILITY_BELL_TERMS_VERSION}`
+          : '';
+      }
+    }
+
+    function openDisabilityVerification() {
+      if (!auth || !auth.currentUser || !demoProfile) {
+        showToast('로그인 후 장애인 하차벨 기능을 인증할 수 있습니다.');
+        return;
+      }
+      if (accountMenuEl) accountMenuEl.classList.add('hidden');
+      if (disabilityVerificationError) disabilityVerificationError.textContent = '';
+      renderDisabilityVerificationState();
+      if (!demoProfile.disabilityBellVerified) {
+        disabilityVerificationForm?.reset();
+        const nameInput = document.getElementById('disabilityLegalName');
+        if (nameInput) nameInput.value = demoProfile.name || '';
+      }
+      if (disabilityVerificationModal) disabilityVerificationModal.classList.remove('hidden');
+    }
+
+    function closeDisabilityVerification() {
+      if (disabilityVerificationForm) disabilityVerificationForm.reset();
+      if (disabilityVerificationError) disabilityVerificationError.textContent = '';
+      if (disabilityVerificationModal) disabilityVerificationModal.classList.add('hidden');
+    }
+
+    function createDisabilityVerificationId() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return `verify_${window.crypto.randomUUID()}`;
+      }
+      return `verify_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
+    }
+
+    disabilityVerificationBtn?.addEventListener('click', openDisabilityVerification);
+    document.getElementById('cancelDisabilityVerificationBtn')?.addEventListener('click', closeDisabilityVerification);
+    document.getElementById('closeDisabilityVerifiedBtn')?.addEventListener('click', closeDisabilityVerification);
+
+    disabilityVerificationForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const user = auth && auth.currentUser;
+      if (!user || !db) {
+        if (disabilityVerificationError) disabilityVerificationError.textContent = '로그인 상태를 확인할 수 없습니다.';
+        return;
+      }
+
+      const legalName = String(document.getElementById('disabilityLegalName').value || '').trim();
+      const documentType = String(document.getElementById('disabilityDocumentType').value || '');
+      const documentLast4 = String(document.getElementById('disabilityDocumentLast4').value || '').trim();
+      const eligibilityConfirmed = document.getElementById('mobilityEligibilityConfirmed').checked;
+      const featureTermsAccepted = document.getElementById('disabilityFeatureTermsAccepted').checked;
+      const sensitiveDataAccepted = document.getElementById('disabilitySensitiveDataAccepted').checked;
+      const submitButton = document.getElementById('submitDisabilityVerificationBtn');
+
+      if (legalName.length < 2) {
+        disabilityVerificationError.textContent = '증빙 서류의 성명을 2자 이상 입력하세요.';
+        return;
+      }
+      const normalizedLegalName = legalName.replace(/\s+/g, '').toLocaleLowerCase('ko-KR');
+      const normalizedAccountName = String(demoProfile && demoProfile.name || '').replace(/\s+/g, '').toLocaleLowerCase('ko-KR');
+      if (!normalizedAccountName || normalizedLegalName !== normalizedAccountName) {
+        disabilityVerificationError.textContent = '증빙 서류의 성명이 가입 계정 이름과 일치하지 않습니다.';
+        return;
+      }
+      if (!documentType) {
+        disabilityVerificationError.textContent = '증빙 유형을 선택하세요.';
+        return;
+      }
+      if (!/^[A-Za-z0-9가-힣]{4}$/.test(documentLast4)) {
+        disabilityVerificationError.textContent = '증빙 식별번호 마지막 4자리를 정확히 입력하세요.';
+        return;
+      }
+      if (!eligibilityConfirmed || !featureTermsAccepted || !sensitiveDataAccepted) {
+        disabilityVerificationError.textContent = '이용 자격 확인과 두 가지 필수 동의를 모두 확인하세요.';
+        return;
+      }
+
+      submitButton.disabled = true;
+      disabilityVerificationError.textContent = '';
+      try {
+        const verificationId = createDisabilityVerificationId();
+        await db.ref(`users/${user.uid}`).update({
+          disabilityBellVerified: true,
+          disabilityBellTermsVersion: DISABILITY_BELL_TERMS_VERSION,
+          disabilityBellConsentAt: firebase.database.ServerValue.TIMESTAMP,
+          disabilityVerification: {
+            id: verificationId,
+            status: 'verified',
+            method: 'demo_local_document_format_check',
+            termsVersion: DISABILITY_BELL_TERMS_VERSION,
+            verifiedAt: firebase.database.ServerValue.TIMESTAMP
+          }
+        });
+        disabilityVerificationForm.reset();
+        showToast('장애인 하차벨 기능 인증이 활성화되었습니다.');
+        if (disabilityVerificationModal) disabilityVerificationModal.classList.add('hidden');
+      } catch (error) {
+        console.error('[Firebase] 장애인 하차벨 인증 저장 실패:', error);
+        disabilityVerificationError.textContent = `인증 저장 실패: ${String(error && (error.code || error.message) || 'unknown')}`;
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
+
+    document.getElementById('revokeDisabilityVerificationBtn')?.addEventListener('click', async () => {
+      const user = auth && auth.currentUser;
+      if (!user || !db) {
+        showToast('로그인 상태를 확인할 수 없습니다.');
+        return;
+      }
+      if (!window.confirm('장애인 하차벨 인증을 취소할까요? 취소 즉시 일반 하차벨 방식으로 전환됩니다.')) {
+        return;
+      }
+
+      const revokeButton = document.getElementById('revokeDisabilityVerificationBtn');
+      revokeButton.disabled = true;
+      try {
+        await db.ref(`users/${user.uid}`).update({
+          disabilityBellVerified: false,
+          disabilityBellTermsVersion: null,
+          disabilityBellConsentAt: null,
+          disabilityVerification: null
+        });
+        closeDisabilityVerification();
+        showToast('장애인 하차벨 인증이 취소되었습니다.');
+      } catch (error) {
+        console.error('[Firebase] 장애인 하차벨 인증 취소 실패:', error);
+        showToast(`인증 취소 실패: ${String(error && (error.code || error.message) || 'unknown')}`);
+      } finally {
+        revokeButton.disabled = false;
+      }
+    });
+
+    function openTerms() {
+      if (termsModal) termsModal.classList.remove('hidden');
+      if (accountMenuEl) accountMenuEl.classList.add('hidden');
+    }
+    function closeTerms() {
+      if (termsModal) termsModal.classList.add('hidden');
+    }
+    document.getElementById('openTermsFromSignup')?.addEventListener('click', openTerms);
+    document.getElementById('accountTermsBtn')?.addEventListener('click', openTerms);
+    document.getElementById('closeTermsBtn')?.addEventListener('click', closeTerms);
+
+    document.getElementById('deleteAccountBtn')?.addEventListener('click', () => {
+      if (accountMenuEl) accountMenuEl.classList.add('hidden');
+      if (deleteAccountModal) deleteAccountModal.classList.remove('hidden');
+      const passwordInput = document.getElementById('deleteAccountPassword');
+      if (passwordInput) setTimeout(() => passwordInput.focus(), 100);
+    });
+    document.getElementById('cancelDeleteAccountBtn')?.addEventListener('click', () => {
+      document.getElementById('deleteAccountForm')?.reset();
+      document.getElementById('deleteAccountError').textContent = '';
+      if (deleteAccountModal) deleteAccountModal.classList.add('hidden');
+    });
+
+    document.getElementById('deleteAccountForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const user = auth && auth.currentUser;
+      const errorElement = document.getElementById('deleteAccountError');
+      const deleteButton = document.getElementById('confirmDeleteAccountBtn');
+      if (!user || !user.email || !db) {
+        errorElement.textContent = '로그인 상태를 확인할 수 없습니다.';
+        return;
+      }
+      deleteButton.disabled = true;
+      errorElement.textContent = '';
+      try {
+        const password = String(document.getElementById('deleteAccountPassword').value || '');
+        const credential = firebase.auth.EmailAuthProvider.credential(user.email, password);
+        await user.reauthenticateWithCredential(credential);
+        await db.ref(`users/${user.uid}`).remove();
+        await user.delete();
+        if (deleteAccountModal) deleteAccountModal.classList.add('hidden');
+        showToast('회원 탈퇴가 완료되었습니다.');
+      } catch (error) {
+        console.error('[Firebase Auth] 회원 탈퇴 실패:', error);
+        errorElement.textContent = getFirebaseAuthErrorMessage(error);
+      } finally {
+        deleteButton.disabled = false;
+      }
+    });
+
+    setAuthMode('login');
+    if (auth && db) {
+      auth.onAuthStateChanged((user) => {
+        clearAuthenticatedProfile();
+        if (!user) {
+          openLogin();
+          return;
+        }
+        authProfileRef = db.ref(`users/${user.uid}`);
+        authProfileRef.on('value', (snapshot) => {
+          const profile = snapshot.val() || {};
+          demoProfile = {
+            uid: user.uid,
+            userId: user.uid,
+            email: user.email || '',
+            name: profile.displayName || user.displayName || (user.email ? user.email.split('@')[0] : '회원'),
+            accessibility: profile.disabilityBellVerified === true,
+            disabilityBellVerified: profile.disabilityBellVerified === true,
+            disabilityBellTermsVersion: profile.disabilityBellTermsVersion || null,
+            disabilityVerification: profile.disabilityVerification || null,
+            termsVersion: profile.termsVersion || null
+          };
+          renderDemoProfile();
+        }, (error) => {
+          console.error('[Firebase] 사용자 프로필 읽기 실패:', error);
+          demoProfile = {
+            uid: user.uid,
+            userId: user.uid,
+            email: user.email || '',
+            name: user.displayName || (user.email ? user.email.split('@')[0] : '회원'),
+            accessibility: false,
+            disabilityBellVerified: false,
+            disabilityBellTermsVersion: null,
+            disabilityVerification: null,
+            termsVersion: null
+          };
+          renderDemoProfile();
+        });
+      });
+    } else if (authErrorEl) {
+      authErrorEl.textContent = getFirebaseAuthErrorMessage(firebaseBootstrapError);
+      openLogin();
+    }
 
     // ==========================================
     // 3. 지도 이미지 및 내비게이션 줌
@@ -1259,10 +1769,6 @@
     // 7. Firebase 실시간 데이터 수신
     // ==========================================
     let isInitialCameraFocused = false;
-    // Firebase 인스턴스는 아래 하차 예약 영역에서도 사용하므로
-    // try 블록 밖에 선언해야 합니다. (기존에는 블록 안 const라서
-    // 예약 코드에서 항상 ReferenceError가 발생했습니다.)
-    let db = null;
     const firebaseStatus = document.getElementById('firebaseStatus');
     const lockBtn = document.getElementById('lockBtn');
     const toast = document.getElementById('toast');
@@ -1275,8 +1781,7 @@
     }
 
     try {
-      firebase.initializeApp({ databaseURL: FIREBASE_DB_URL });
-      db = firebase.database();
+      if (!db) throw firebaseBootstrapError || new Error('Firebase database is not initialized');
       setFirebaseStatus('Firebase 연결 대기 중...', '');
 
       db.ref('.info/connected').on('value', (snap) => {
@@ -1516,11 +2021,6 @@
           ...normalizeStops(val.stops),
           ...rawBuses.flatMap((bus) => [...(bus.allStops || []), ...(bus.upcomingStops || [])])
         ]);
-        const stopCount = (globalStops && globalStops.length > 0) ? ` · 정류장 ${globalStops.length}곳` : '';
-        setFirebaseStatus(
-          `Firebase 연결됨 · 플레이어 ${normalizeList(val.players).length}명 · 버스 ${visibleBuses.length}대${stopCount}`,
-          'ok'
-        );
       }, (error) => {
         console.error('[Firebase] /radar 읽기 실패:', error);
         setFirebaseStatus('Firebase 읽기 실패 · 규칙/URL 확인 필요', 'error');
@@ -1648,8 +2148,10 @@
       const pill = document.getElementById('nearbyBusPill');
       if (!pill) return;
 
-      if (!targetPlayer || buses.size === 0) {
+      // Roblox가 탑승 중이라고 판정한 동안에는 근처 버스를 다시 찾는 접근 알림을 표시하지 않습니다.
+      if (!targetPlayer || buses.size === 0 || boardedBusId || (latestBellInfo && latestBellInfo.active === true)) {
         pill.style.display = 'none';
+        pill.onclick = null;
         return;
       }
 
@@ -1782,6 +2284,9 @@
     const cancellingReservationKeys = new Set();
     // 모바일에서는 탭이 연속 전달될 수 있어, 같은 버스의 set 요청이 겹치지 않게 합니다.
     const reservationSaveInFlight = new Set();
+    // 버스별로 마지막 확인된 정류장 순번을 유지해 노선별 upcomingStops가 잠깐
+    // 비어도 탑승 중 이미 지난 정류장이 예약 목록에 다시 나타나지 않게 합니다.
+    const boardedReservationProgress = new Map();
 
     function stopMatches(first, second) {
       if (!first || !second) return false;
@@ -1811,14 +2316,42 @@
       return nearest && nearest.distance <= BOARDING_STOP_RADIUS ? nearest : null;
     }
 
+    function isBoardedBus(bus) {
+      if (!bus || !boardedBusId) return false;
+
+      // radar/bell 양쪽 모두 실제 차량의 FullName을 우선 전송합니다. 다만 레이더
+      // 갱신 사이에 bell 데이터가 먼저 도착할 수 있으므로, 그 경우에는 고유한
+      // 차량 이름 한 대에 한해서만 이름 비교를 보조 수단으로 허용합니다.
+      const candidates = [
+        boardedBusId,
+        latestBellInfo && latestBellInfo.busId,
+        latestBellInfo && latestBellInfo.busName
+      ].filter((value) => value !== undefined && value !== null && String(value) !== '')
+        .map((value) => String(value));
+
+      if (candidates.includes(String(bus.id))) return true;
+
+      const busName = String(bus.name || '');
+      if (!busName || !candidates.includes(busName)) return false;
+
+      // 같은 Model.Name을 가진 복제 차량이 있을 때 다른 차량을 탑승 버스로
+      // 오인하지 않도록, 이름이 지도에 한 대일 때만 보조 비교를 사용합니다.
+      const sameNameCount = [...buses.values()]
+        .filter((candidate) => String(candidate.name || '') === busName).length;
+      return sameNameCount === 1;
+    }
+
     function getBoardingEligibility(bus) {
       if (!bus) return { eligible: false, origin: null, isOnBus: false, reason: '버스 정보를 불러오는 중입니다.' };
-      if (!targetPlayer) return { eligible: false, origin: null, isOnBus: false, reason: '현재 위치를 불러오는 중입니다.' };
-      // model.Name은 복제 원본과 실제 차량이 동일할 수 있어 탑승 판단에 사용하면
-      // 다른 버스의 "지금 하차하기"가 열릴 수 있습니다. 서버가 보낸 FullName(id)만
-      // 일치할 때 실제 탑승 버스로 인정합니다.
-      const isOnBus = !!boardedBusId && String(bus.id) === boardedBusId;
+      // 탑승 상태는 플레이어 위치 데이터보다 먼저 수신될 수 있습니다. 따라서
+      // 위치가 잠깐 비어도 실제 탑승 버스에서는 하차 예약이 막히지 않게 먼저 판정합니다.
+      const isOnBus = isBoardedBus(bus);
       if (isOnBus) return { eligible: true, origin: null, isOnBus: true };
+
+      // 버스에서 내린 뒤 같은 차량을 다시 탔을 때 이전 탑승 진행도를 물려받지 않습니다.
+      boardedReservationProgress.delete(String(bus.id));
+
+      if (!targetPlayer) return { eligible: false, origin: null, isOnBus: false, reason: '현재 위치를 불러오는 중입니다.' };
 
       const playerStop = getPlayerBoardingStop();
       const routeStops = (bus.upcomingStops && bus.upcomingStops.length > 0) ? bus.upcomingStops : (bus.allStops || []);
@@ -1842,12 +2375,112 @@
       return { eligible: true, origin: playerStop.stop, isOnBus: false };
     }
 
+    function getReservationStopCandidates(bus, boarding) {
+      if (!bus) return [];
+
+      // 서버가 계산한 upcomingStops가 있으면 그것만 신뢰합니다. 지도 전역 정류장을
+      // 섞으면 다른 노선이나 이전 데이터의 정류장이 예약 목록에 들어올 수 있습니다.
+      const reportedUpcoming = Array.isArray(bus.upcomingStops) ? bus.upcomingStops.filter(Boolean) : [];
+      const reportedAllStops = Array.isArray(bus.allStops) ? bus.allStops.filter(Boolean) : [];
+      let sourceStops = reportedUpcoming;
+      if (sourceStops.length === 0) sourceStops = reportedAllStops;
+      if (sourceStops.length === 0) {
+        // 현재 Roblox 데이터가 노선별 정류장 배열을 비워 보내는 경우에도
+        // radar/stops로 수신한 정류장 좌표를 해당 버스 거리와 함께 사용합니다.
+        sourceStops = globalStops.map((stop) => Object.assign({}, stop, {
+          distance: Math.hypot(Number(stop.x) - Number(bus.curX), Number(stop.z) - Number(bus.curZ))
+        }));
+      }
+      if (sourceStops.length === 0) return [];
+
+      const onBus = !!(boarding && boarding.isOnBus);
+      const nearbyPlayerStop = onBus ? getPlayerBoardingStop() : null;
+      const referenceStop = onBus
+        ? (bus.currentStop || (nearbyPlayerStop && nearbyPlayerStop.stop))
+        : (boarding && boarding.origin);
+      const detectedReferenceIndex = Number(referenceStop && referenceStop.index);
+      let referenceIndex = Number.isFinite(detectedReferenceIndex) ? detectedReferenceIndex : null;
+
+      if (onBus && referenceIndex !== null) {
+        const previousIndex = boardedReservationProgress.get(String(bus.id));
+        referenceIndex = Number.isFinite(Number(previousIndex))
+          ? Math.max(Number(previousIndex), referenceIndex)
+          : referenceIndex;
+        boardedReservationProgress.set(String(bus.id), referenceIndex);
+      } else if (onBus) {
+        const previousIndex = boardedReservationProgress.get(String(bus.id));
+        if (Number.isFinite(Number(previousIndex))) referenceIndex = Number(previousIndex);
+      }
+
+      const hasReferenceIndex = Number.isFinite(referenceIndex);
+
+      const uniqueStops = new Map();
+
+      for (const stop of sourceStops) {
+        const stopIndex = Number(stop.index);
+        const isCurrentBusStop = !!bus.currentStop && stopMatches(stop, bus.currentStop);
+        const isVeryClose = Number.isFinite(Number(stop.distance))
+          && Number(stop.distance) <= RESERVATION_MIN_DISTANCE;
+
+        // 현재 정류장은 탑승 전/후 모두 예약할 수 없습니다. 탑승 전에는 사용자가
+        // 서 있는 정류장과 그 이전 순번도 숨겨, 버스가 아직 도착하지 않아도 과거
+        // 정류장으로 예약하는 일이 없게 합니다.
+        const isReferenceStop = !!referenceStop && stopMatches(stop, referenceStop);
+        const isAtOrBeforeReference = hasReferenceIndex && Number.isFinite(stopIndex)
+          && stopIndex <= referenceIndex;
+        if (isCurrentBusStop || isVeryClose || isReferenceStop
+          || isAtOrBeforeReference) {
+          continue;
+        }
+
+        const explicitId = stop.stopId ?? stop.stopID ?? stop.stationId ?? stop.stationID;
+        const dedupeKey = explicitId !== undefined && explicitId !== null && String(explicitId) !== ''
+          ? `id:${String(explicitId)}`
+          : `index:${Number.isFinite(stopIndex) ? stopIndex : ''}:${Number(stop.x) || ''}:${Number(stop.z) || ''}`;
+        if (!uniqueStops.has(dedupeKey)) uniqueStops.set(dedupeKey, stop);
+      }
+
+      return [...uniqueStops.values()].sort((first, second) => {
+        const firstIndex = Number(first.index);
+        const secondIndex = Number(second.index);
+        if (!Number.isFinite(firstIndex) || !Number.isFinite(secondIndex)) return 0;
+        return firstIndex - secondIndex;
+      });
+    }
+
     function findBusForReservation(key, reservation) {
       for (const bus of buses.values()) {
         const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
         if (busKey === key || bus.id === reservation.busId) return bus;
       }
       return null;
+    }
+
+    function findReservationEntryForBus(bus) {
+      if (!bus) return null;
+      const directKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      if (currentReservations[directKey]) {
+        return { key: directKey, reservation: currentReservations[directKey] };
+      }
+
+      for (const [key, reservation] of Object.entries(currentReservations)) {
+        if (reservation && String(reservation.busId || '') === String(bus.id)) {
+          return { key, reservation };
+        }
+      }
+
+      // 탑승 전 예약 이후 Roblox 차량 Model이 복제·개명된 짧은 구간에는
+      // 실제 탑승 버스와 노선이 같은 승차 대기 예약 하나만 연결해 표시합니다.
+      if (!isBoardedBus(bus)) return null;
+      const routeMatches = Object.entries(currentReservations).filter(([, reservation]) => (
+        reservation
+        && (reservation.status === undefined || reservation.status === 'pending')
+        && reservation.awaitingBoarding === true
+        && String(reservation.route || '') === String(bus.route || '')
+      ));
+      return routeMatches.length === 1
+        ? { key: routeMatches[0][0], reservation: routeMatches[0][1] }
+        : null;
     }
 
     function monitorUnboardedReservations() {
@@ -1951,7 +2584,8 @@
       }
 
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
-      const currentRes = currentReservations[busKey];
+      const reservationEntry = findReservationEntryForBus(bus);
+      const currentRes = reservationEntry && reservationEntry.reservation;
       const boarding = getBoardingEligibility(bus);
       const bellEngaged = isBusBellEngaged(bus);
       if (exitNowSection) exitNowSection.hidden = !boarding.isOnBus;
@@ -1966,17 +2600,7 @@
       if (!stopListEl) return;
       stopListEl.innerHTML = '';
 
-      let upcoming = bus.upcomingStops || [];
-      if (upcoming.length === 0 && bus.allStops && bus.allStops.length > 0) {
-        upcoming = bus.allStops;
-      }
-      // 노선 폴더의 순번 목록이 아직 오지 않아도, 지도에 수신된 정류장은 예약할 수 있게 합니다.
-      // reserveStop이 좌표를 함께 저장하므로 Roblox도 노선 목록 없이 거리 기반 자동 벨을 실행할 수 있습니다.
-      if (upcoming.length === 0 && globalStops.length > 0) {
-        upcoming = globalStops.map((stop) => Object.assign({}, stop, {
-          distance: Math.hypot(Number(stop.x) - bus.curX, Number(stop.z) - bus.curZ)
-        }));
-      }
+      const upcoming = getReservationStopCandidates(bus, boarding);
       if (upcoming.length === 0) {
         if (currentRes) {
           const legacyLabel = currentRes.targetStopName || currentRes.targetStopId || currentRes.targetStopIndex || '알 수 없는 정류장';
@@ -2044,11 +2668,18 @@
         showToast(boarding.reason || '승차 정류장 2정거장 전부터 예약할 수 있습니다.');
         return;
       }
-      const allStops = [...(bus.upcomingStops || []), ...(bus.allStops || []), ...globalStops];
-      const selectedStop = allStops.find((stop) => {
+      // 화면에 보인 이후 레이더가 갱신될 수 있으므로, 저장 직전에도 같은 필터를
+      // 다시 적용합니다. 현재·이전 정류장이나 다른 노선 정류장은 저장되지 않습니다.
+      const selectedStop = getReservationStopCandidates(bus, boarding).find((stop) => {
         if (stopId && stop.stopId !== undefined && stop.stopId !== null) return String(stop.stopId) === String(stopId);
         return Number(stop.index) === Number(stopIndex);
       });
+
+      if (!selectedStop) {
+        showToast('현재 정류장과 이전 정류장은 하차 예약할 수 없습니다. 목록을 새로고침해 주세요.');
+        renderReservationSheet();
+        return;
+      }
 
       const isCurrentStop = bus.currentStop && selectedStop && (
         bus.currentStop.stopId !== undefined && bus.currentStop.stopId !== null && selectedStop.stopId !== undefined && selectedStop.stopId !== null
@@ -2127,6 +2758,8 @@
       }
 
       const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      const reservationEntry = findReservationEntryForBus(bus);
+      const reservationKey = reservationEntry ? reservationEntry.key : busKey;
       const useAccessibilityBell = !!(demoProfile && demoProfile.accessibility && !bus.isHighFloor);
       const timestamp = Date.now();
       const bellEvent = {
@@ -2146,14 +2779,14 @@
       // 기존 예약은 무조건 함께 지웁니다. 바로 하차 후 자동 예약이 되살아나는 것을 막습니다.
       const updates = {
         'bell/latest': bellEvent,
-        [`radar/reservations/${busKey}`]: null
+        [`radar/reservations/${reservationKey}`]: null
       };
 
       db.ref().update(updates).then(() => {
         // 다음 레이더 수신을 기다리는 동안에도 중복 클릭되지 않도록 즉시 화면 상태를 갱신합니다.
         bus.isBellRinging = true;
         immediateBellPendingUntil.set(bus.id, Date.now() + 8_000);
-        delete currentReservations[busKey];
+        delete currentReservations[reservationKey];
         showToast('🔔 하차벨을 즉시 작동했습니다.');
         renderReservationSheet();
       }).catch((error) => {
@@ -2167,8 +2800,12 @@
         showToast('Firebase 연결 전입니다. 잠시 후 다시 시도하세요.');
         return;
       }
-      const busKey = busId.replace(/[.#$/[\]]/g, '_');
-      db.ref('radar/reservations/' + busKey).remove().catch((error) => {
+      const bus = buses.get(busId);
+      const reservationEntry = findReservationEntryForBus(bus);
+      const reservationKey = reservationEntry
+        ? reservationEntry.key
+        : busId.replace(/[.#$/[\]]/g, '_');
+      db.ref('radar/reservations/' + reservationKey).remove().catch((error) => {
         console.error('[Firebase] 하차 예약 취소 실패:', error);
         showToast('하차 예약 취소에 실패했습니다. Firebase 규칙을 확인하세요.');
       });
