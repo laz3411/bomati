@@ -131,5 +131,19 @@
 
 `named_spawn_server.lua`를 `ServerScriptService` 아래의 **Script**에 넣고, `Workspace`에 Anchored Part를 만든 뒤 스크립트의 `PLAYER_SPAWN_PARTS` 표에 플레이어 이름과 파트 이름을 연결합니다. 해당 플레이어는 입장하거나 리스폰할 때마다 지정된 파트 위로 이동합니다.
 
+---
+
+## 7. 접촉식 정류장 안내방송
+
+`stop_announcement_server.lua`는 버스가 정류장 트리거 파트에 닿는 즉시 방송합니다. 기존의 거리/노선 순서 계산은 사용하지 않습니다.
+
+1. `Workspace` 안에 정류장마다 트리거용 **BasePart**를 배치합니다.
+2. 트리거 파트의 Attribute에 `StopId` 또는 `stopID`를 입력합니다. 값은 `001`, `002`, `003`처럼 입력합니다.
+3. 방송용 `Sound`에도 같은 이름의 Attribute를 입력합니다. 예를 들어 `StopId = "001"`인 Sound는 `StopId = "001"`인 파트에서 재생됩니다.
+4. `stop_announcement_server.lua`를 `ServerScriptService`의 Script로 교체합니다.
+5. 서버 Output에 `접촉식 모드 활성화: 오디오 n개 / 트리거 파트 n개`가 표시되는지 확인합니다.
+
+Sound는 `Workspace`, `SoundService`, `ReplicatedStorage`, `ServerStorage` 중 어디에 있어도 검색됩니다. 버스는 `BUS` 태그, `SpawnedBus` Attribute, `Route` Attribute, 또는 `VehicleSeat` 중 하나가 있으면 인식됩니다.
+
 
 
