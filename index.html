@@ -1385,7 +1385,7 @@
     <div id="toast" class="toast">자유 이동 모드 (과녁 클릭 시 내 위치 복귀)</div>
 
     <!-- Firebase Authentication 로그인 -->
-    <div id="demoLogin" class="demo-login" role="dialog" aria-modal="true" aria-label="로그인">
+    <div id="demoLogin" class="demo-login hidden" role="dialog" aria-modal="true" aria-label="로그인">
       <div class="demo-login-card">
         <div class="demo-login-eyebrow">BOMATI ACCOUNT</div>
         <h1 id="authTitle" class="demo-login-title">로그인</h1>
@@ -1513,6 +1513,17 @@
         </form>
       </div>
     </div>
+
+    <div id="reservationSwitchModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="reservationSwitchTitle">
+      <div class="modal-card">
+        <h2 id="reservationSwitchTitle">기존 하차 예약 변경</h2>
+        <p id="reservationSwitchMessage" class="demo-login-copy">다른 버스에 하차 예약이 있습니다. 이전 예약을 취소하시겠습니까?</p>
+        <div class="modal-actions">
+          <button id="reservationSwitchNoBtn" class="modal-btn" type="button">아니요</button>
+          <button id="reservationSwitchYesBtn" class="modal-btn primary" type="button">예, 변경</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -1602,6 +1613,9 @@
     let demoProfile = null;
     let authMode = 'login';
     let authProfileRef = null;
+    // Firebase가 LOCAL 로그인 세션을 복원하기 전에는 로그인 창을 열지 않아
+    // 새로고침할 때 로그인된 사용자에게 잠깐 로그인 화면이 보이지 않게 합니다.
+    let authStateResolved = false;
     const demoLoginEl = document.getElementById('demoLogin');
     const demoAccountBtn = document.getElementById('demoAccountBtn');
     const accountMenuEl = document.getElementById('accountMenu');
@@ -1684,6 +1698,8 @@
     }
 
     function openLogin() {
+      // Firebase LOCAL 세션 복원 도중에는 로그인 UI를 열지 않습니다.
+      if (auth && !authStateResolved) return;
       if (accountMenuEl) accountMenuEl.classList.add('hidden');
       if (demoLoginEl) demoLoginEl.classList.remove('hidden');
       const emailInput = document.getElementById('authEmail');
@@ -1980,6 +1996,7 @@
     setAuthMode('login');
     if (auth && db) {
       auth.onAuthStateChanged((user) => {
+        authStateResolved = true;
         clearAuthenticatedProfile();
         if (!user) {
           openLogin();
@@ -2031,6 +2048,8 @@
     // 뷰포트 상태
     let viewX = 0, viewY = 0, viewScale = 1.0, viewRotation = 0;
     let isLocked = true; // 기본: 내 위치 및 방향 자동 추적 모드
+    // 예약 바텀 시트가 열린 동안 계속 따라갈 버스입니다.
+    let reservationFollowBusId = null;
 
     mapImg.onload = () => {
       mapLoaded = true;
@@ -2304,6 +2323,24 @@
         bus.curAngle = lerpAngle(bus.curAngle, bus.targetAngle, 0.2);
       }
 
+      const reservationFollowBus = reservationFollowBusId
+        ? buses.get(reservationFollowBusId)
+        : null;
+      if (reservationFollowBus) {
+        const { x: busMapX, y: busMapY } = worldToMap(reservationFollowBus.curX, reservationFollowBus.curZ);
+        const sheet = document.getElementById('reservationSheet');
+        const sheetTop = sheet && sheet.classList.contains('active')
+          ? sheet.getBoundingClientRect().top
+          : ch * 0.48;
+        // 시트에 가리지 않는 지도 영역의 중앙에 선택 버스를 고정합니다.
+        const followScreenY = Math.max(70, Math.min(ch * 0.46, sheetTop * 0.5));
+        viewX = cw * 0.5 - busMapX * viewScale;
+        viewY = followScreenY - busMapY * viewScale;
+        viewRotation = 0;
+        isLocked = false;
+        lockBtn?.classList.remove('active');
+      }
+
       ctx.save();
 
       // [잠금 모드]: 플레이어가 화면 정중앙, 플레이어 진행 방향이 항상 화면 위쪽
@@ -2457,6 +2494,10 @@
 
         // 정류장 이름 또는 번호 라벨 (선명한 외곽선)
         if (labelsOnly) {
+          // 내비게이션 모드에서는 지도 자체가 플레이어 진행 방향에 맞춰
+          // 회전하므로, 정류장명은 그 반대 방향으로 보정해 항상 똑바로 읽힙니다.
+          // 핀 위치는 지도와 함께 회전하고 글자만 화면 방향을 유지합니다.
+          if (isLocked && targetPlayer) ctx.rotate(viewRotation);
           const fontSize = Math.max(7.5 / viewScale, 4.5);
           ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
           ctx.textAlign = 'center';
@@ -2893,6 +2934,9 @@
           ...normalizeStops(val.stops),
           ...rawBuses.flatMap((bus) => [...(bus.allStops || []), ...(bus.upcomingStops || [])])
         ]);
+        // 차량 선택 창이 열린 상태에서도 거리·운행 상태·예약 가능 여부를
+        // 최신 Firebase 프레임으로 갱신합니다.
+        scheduleBusExplorerRender();
         scheduleReservationSheetRender();
       }, (error) => {
         console.error('[Firebase] /radar 읽기 실패:', error);
@@ -3063,6 +3107,9 @@
     let busExplorerMode = 'routes';
     let busExplorerRoute = null;
     let busExplorerDirection = null;
+    let busExplorerPointerActive = false;
+    let busExplorerRenderQueued = false;
+    let busExplorerRenderPending = false;
     let selectedRouteFilter = null;
     let selectedDirectionFilter = null;
     const BUS_SEARCH_MAX_DISTANCE = 900;
@@ -3205,13 +3252,16 @@
         showToast('선택한 노선의 운행 차량 정보를 아직 받지 못했습니다.');
         return;
       }
-      selectedRouteFilter = routeKey;
-      selectedDirectionFilter = directionKey;
-      closeBusExplorer();
-      closeReservationSheet();
-      focusMapOnRouteBuses(routeBuses);
-      updateRouteSelectionPill();
-      showToast(`🚌 ${routeKey}번 ${directionKey ? getBusDirectionLabel(directionKey) : '노선'} ${routeBuses.length}대를 지도에서 선택하세요.`);
+      const closestBus = [...routeBuses].sort((first, second) => {
+        const firstDistance = targetPlayer
+          ? Math.hypot(first.curX - targetPlayer.curX, first.curZ - targetPlayer.curZ)
+          : Infinity;
+        const secondDistance = targetPlayer
+          ? Math.hypot(second.curX - targetPlayer.curX, second.curZ - targetPlayer.curZ)
+          : Infinity;
+        return firstDistance - secondDistance;
+      })[0];
+      selectBusForReservation(closestBus);
     }
 
     function clearSelectedRoute(announce = true) {
@@ -3269,6 +3319,45 @@
       return busExplorerStop ? getBusesServingStop(busExplorerStop) : getNearbyBuses();
     }
 
+    function scheduleBusExplorerRender() {
+      if (!busExplorerModal || busExplorerModal.classList.contains('hidden')) return;
+      if (busExplorerPointerActive) {
+        busExplorerRenderPending = true;
+        return;
+      }
+      if (busExplorerRenderQueued) return;
+      busExplorerRenderQueued = true;
+      requestAnimationFrame(() => {
+        busExplorerRenderQueued = false;
+        if (busExplorerPointerActive) {
+          busExplorerRenderPending = true;
+          return;
+        }
+        busExplorerRenderPending = false;
+        updateBusExplorerHeader();
+        renderBusExplorer();
+      });
+    }
+
+    function selectBusForReservation(bus) {
+      if (!bus || !buses.has(bus.id)) {
+        showToast('선택한 차량의 최신 정보를 다시 불러오는 중입니다.');
+        scheduleBusExplorerRender();
+        return;
+      }
+      if (boardedBusId && !isBoardedBus(bus)) {
+        showToast('현재 탑승 중인 버스가 있어 다른 버스의 하차 예약을 열 수 없습니다.');
+        return;
+      }
+      // 예전의 "지도에서 차량 선택" 단계와 노선 선택 pill을 남기지 않습니다.
+      selectedRouteFilter = null;
+      selectedDirectionFilter = null;
+      updateRouteSelectionPill();
+      const busId = bus.id;
+      closeBusExplorer();
+      openReservationSheet(busId);
+    }
+
     function updateBusExplorerHeader() {
       const showingVehicles = busExplorerMode === 'vehicles' && !!busExplorerRoute;
       if (backBusExplorerBtn) backBusExplorerBtn.hidden = !showingVehicles;
@@ -3282,8 +3371,8 @@
         busExplorerSubtitle.textContent = showingVehicles
           ? '차량을 선택하면 하차 예약 창이 열립니다.'
           : (busExplorerStop
-            ? '노선을 고르면 해당 노선을 운행 중인 차량을 선택할 수 있습니다.'
-            : '노선 번호를 찾은 뒤 운행 중인 차량을 선택하세요.');
+            ? '노선을 누르면 가장 가까운 예약 가능 차량의 하차 예약 창이 열립니다.'
+            : '노선을 누르면 가장 가까운 예약 가능 차량으로 바로 이동합니다.');
       }
       if (busSearchInput) {
         busSearchInput.placeholder = showingVehicles ? '차량번호 검색 (예: 0037호)' : '노선 번호 검색';
@@ -3298,6 +3387,12 @@
       ));
       if (!routeKey || routeBuses.length === 0) {
         showToast('선택한 노선의 운행 차량 정보를 아직 받지 못했습니다.');
+        return;
+      }
+      // 사진처럼 해당 노선·방향에 예약 가능한 차량이 한 대뿐이면 불필요한
+      // 차량 선택 단계를 건너뛰고 즉시 하차 예약 창을 엽니다.
+      if (routeBuses.length === 1) {
+        selectBusForReservation(routeBuses[0]);
         return;
       }
       busExplorerMode = 'vehicles';
@@ -3353,14 +3448,7 @@
           distance.className = 'bus-explorer-distance';
           distance.textContent = Number.isFinite(bus._stopDistance) ? `${Math.round(bus._stopDistance)}m` : '거리 대기';
           item.append(route, detail, distance);
-          item.addEventListener('click', () => {
-            selectedRouteFilter = getBusRouteKey(bus);
-            selectedDirectionFilter = getBusDirectionKey(bus);
-            updateRouteSelectionPill();
-            focusMapOnRouteBuses([bus]);
-            closeBusExplorer();
-            openReservationSheet(bus.id);
-          });
+          item.addEventListener('click', () => selectBusForReservation(bus));
           busExplorerList.appendChild(item);
         });
         return;
@@ -3382,8 +3470,8 @@
         const meta = document.createElement('span');
         meta.className = 'bus-explorer-meta';
         meta.textContent = busExplorerStop
-          ? `이 정류장 통과 · 예약 가능 차량 ${group.buses.length}대`
-          : `근처 예약 가능 차량 ${group.buses.length}대`;
+          ? `이 정류장 통과 · ${group.buses.length}대 중 가장 가까운 차량 바로 선택`
+          : `근처 ${group.buses.length}대 중 가장 가까운 차량 바로 선택`;
         detail.append(name, meta);
         const distance = document.createElement('span');
         distance.className = 'bus-explorer-distance';
@@ -3392,7 +3480,12 @@
           : '거리 대기';
         item.append(route, detail, distance);
         item.addEventListener('click', () => {
-          showBusVehiclesForRoute(group.route, group.direction);
+          // 노선을 누르면 같은 노선·방향 중 가장 가까운 예약 가능 차량을
+          // 즉시 선택해 지도 초점과 하차 예약 창을 함께 엽니다.
+          const closestBus = [...group.buses].sort((first, second) => (
+            (first._stopDistance ?? Infinity) - (second._stopDistance ?? Infinity)
+          ))[0];
+          selectBusForReservation(closestBus);
         });
         busExplorerList.appendChild(item);
       });
@@ -3460,6 +3553,19 @@
     busExplorerModal?.addEventListener('click', (event) => {
       if (event.target === busExplorerModal) closeBusExplorer();
     });
+    busExplorerList?.addEventListener('pointerdown', () => {
+      busExplorerPointerActive = true;
+    }, true);
+    const finishBusExplorerPointer = () => {
+      if (!busExplorerPointerActive) return;
+      // click이 실행되기 전에 실시간 렌더가 항목을 교체하지 않도록 다음 작업으로 넘깁니다.
+      window.setTimeout(() => {
+        busExplorerPointerActive = false;
+        if (busExplorerRenderPending) scheduleBusExplorerRender();
+      }, 0);
+    };
+    window.addEventListener('pointerup', finishBusExplorerPointer, true);
+    window.addEventListener('pointercancel', finishBusExplorerPointer, true);
     busSearchInput?.addEventListener('input', renderBusExplorer);
 
     canvas.addEventListener('pointerdown', (e) => {
@@ -3582,6 +3688,8 @@
     const autoCancelledReservations = new Map();
     // 모바일에서는 탭이 연속 전달될 수 있어, 같은 버스의 set 요청이 겹치지 않게 합니다.
     const reservationSaveInFlight = new Set();
+    let reservationReplacementInFlight = false;
+    let reservationSwitchResolver = null;
     const reservationNotificationModes = new Map();
     const RESERVATION_NOTIFICATION_MODES = Object.freeze({
       BANNER: 'banner',
@@ -3596,6 +3704,52 @@
     // 버스별로 마지막 확인된 정류장 순번을 유지해 노선별 upcomingStops가 잠깐
     // 비어도 탑승 중 이미 지난 정류장이 예약 목록에 다시 나타나지 않게 합니다.
     const boardedReservationProgress = new Map();
+
+    function finishReservationSwitchConfirmation(confirmed) {
+      const modal = document.getElementById('reservationSwitchModal');
+      if (modal) modal.classList.add('hidden');
+      const resolver = reservationSwitchResolver;
+      reservationSwitchResolver = null;
+      if (resolver) resolver(confirmed === true);
+    }
+
+    function confirmReservationSwitch(existingLabel, nextLabel) {
+      if (reservationSwitchResolver) finishReservationSwitchConfirmation(false);
+      const modal = document.getElementById('reservationSwitchModal');
+      const message = document.getElementById('reservationSwitchMessage');
+      if (!modal || !message) return Promise.resolve(false);
+      message.textContent = `${existingLabel} 예약이 있습니다. 이전 예약을 취소하고 ${nextLabel} 예약으로 변경하시겠습니까?`;
+      modal.classList.remove('hidden');
+      return new Promise((resolve) => {
+        reservationSwitchResolver = resolve;
+      });
+    }
+
+    document.getElementById('reservationSwitchNoBtn')?.addEventListener('click', () => finishReservationSwitchConfirmation(false));
+    document.getElementById('reservationSwitchYesBtn')?.addEventListener('click', () => finishReservationSwitchConfirmation(true));
+
+    function isActiveReservation(reservation) {
+      if (!reservation) return false;
+      const status = String(reservation.status || 'pending').toLowerCase();
+      return status === 'pending' || status === 'triggered';
+    }
+
+    function getOtherActiveReservationEntries(bus) {
+      if (!bus) return [];
+      const busKey = String(bus.id).replace(/[.#$/[\]]/g, '_');
+      return Object.entries(currentReservations).filter(([key, reservation]) => (
+        isActiveReservation(reservation)
+        && key !== busKey
+        && String(reservation.busId || '') !== String(bus.id)
+      )).map(([key, reservation]) => ({ key, reservation }));
+    }
+
+    function formatReservationBusLabel(entry) {
+      const matchedBus = findBusForReservation(entry.key, entry.reservation);
+      const route = String(entry.reservation.route || matchedBus?.route || '다른 버스');
+      const license = matchedBus ? formatBusLicense(matchedBus) : '';
+      return `${route}번${license ? ` · ${license}` : ''}`;
+    }
 
     function scheduleReservationSheetRender() {
       if (!selectedBusId) return;
@@ -3756,6 +3910,9 @@
       if (!bus) return { eligible: false, origin: null, isOnBus: false, reason: '버스 정보를 불러오는 중입니다.' };
       if (bus.inService === false) {
         return { eligible: false, origin: null, isOnBus: false, reason: '운전자가 아직 상행/하행 운행을 시작하지 않았습니다.' };
+      }
+      if (boardedBusId && !isBoardedBus(bus)) {
+        return { eligible: false, origin: null, isOnBus: false, reason: '현재 탑승 중인 버스에서만 하차 예약할 수 있습니다.' };
       }
       // 탑승 상태는 플레이어 위치 데이터보다 먼저 수신될 수 있습니다. 따라서
       // 위치가 잠깐 비어도 실제 탑승 버스에서는 하차 예약이 막히지 않게 먼저 판정합니다.
@@ -4097,14 +4254,32 @@
     }
 
     function openReservationSheet(busId) {
+      const bus = buses.get(busId);
+      if (!bus) {
+        showToast('선택한 버스의 위치를 다시 불러오는 중입니다.');
+        return;
+      }
       selectedBusId = busId;
+      reservationFollowBusId = busId;
+      selectedRouteFilter = null;
+      selectedDirectionFilter = null;
+      updateRouteSelectionPill();
+      isLocked = false;
+      viewRotation = 0;
+      lockBtn?.classList.remove('active');
       const sheet = document.getElementById('reservationSheet');
       if (sheet) sheet.classList.add('active');
+      // 다음 animation frame을 기다리지 않고 클릭 순간에도 바로 버스 위치로 이동합니다.
+      const point = worldToMap(bus.curX, bus.curZ);
+      const sheetTop = sheet ? sheet.getBoundingClientRect().top : vH * 0.48;
+      viewX = vW * 0.5 - point.x * viewScale;
+      viewY = Math.max(70, Math.min(vH * 0.46, sheetTop * 0.5)) - point.y * viewScale;
       renderReservationSheet();
     }
 
     function closeReservationSheet() {
       selectedBusId = null;
+      reservationFollowBusId = null;
       const sheet = document.getElementById('reservationSheet');
       if (sheet) sheet.classList.remove('active');
     }
@@ -4310,7 +4485,7 @@
       });
     }
 
-    function reserveStop(busId, stopIndex, stopId, stopName) {
+    async function reserveStop(busId, stopIndex, stopId, stopName) {
       const bus = buses.get(busId);
       if (!bus) return;
       if (!db) {
@@ -4320,6 +4495,10 @@
       if (isBusBellEngaged(bus)) {
         showToast('이미 바로 하차 또는 하차벨이 작동 중이라 하차 예약을 할 수 없습니다.');
         renderReservationSheet();
+        return;
+      }
+      if (boardedBusId && !isBoardedBus(bus)) {
+        showToast('현재 탑승 중인 버스에서만 하차 예약할 수 있습니다. 다른 버스 예약은 사용할 수 없습니다.');
         return;
       }
       const boarding = getBoardingEligibility(bus);
@@ -4358,6 +4537,29 @@
       }
       const selectedStopId = selectedStop.stopId ?? selectedStop.stopID ?? selectedStop.stationId ?? selectedStop.stationID;
       const selectedStopName = String(selectedStop.name || stopName || ('정류장 ' + selectedStop.index));
+      const otherReservations = getOtherActiveReservationEntries(bus);
+      if (otherReservations.length > 0) {
+        // 탑승 중에는 다른 차량 예약을 자동으로 지우거나 교체하지 않습니다.
+        if (boarding.isOnBus || boardedBusId) {
+          showToast('다른 버스의 하차 예약이 남아 있어 새 예약을 만들 수 없습니다. 기존 예약을 먼저 취소해 주세요.');
+          return;
+        }
+        if (reservationReplacementInFlight) {
+          showToast('기존 예약을 변경하고 있습니다. 잠시만 기다려 주세요.');
+          return;
+        }
+        const existingLabel = otherReservations.length === 1
+          ? formatReservationBusLabel(otherReservations[0])
+          : `다른 버스 ${otherReservations.length}대의`;
+        const nextLabel = `${bus.route || '버스'}번 · ${formatBusLicense(bus)} ${selectedStopName}`;
+        const confirmed = await confirmReservationSwitch(existingLabel, nextLabel);
+        if (!confirmed) return;
+        // 확인창이 열린 동안 탑승 상태가 바뀌었다면 교체를 중단합니다.
+        if (boardedBusId) {
+          showToast('버스 탑승이 확인되어 다른 버스 예약 변경을 중단했습니다.');
+          return;
+        }
+      }
       // 장애인 하차벨 기능 인증 이용자는 저상버스 예약 시 자동으로 B(장애인) 벨을 사용합니다.
       const useAccessibilityBell = !!(demoProfile && demoProfile.accessibility && !bus.isHighFloor);
       const notificationMode = getReservationNotificationMode(bus.id);
@@ -4365,8 +4567,9 @@
       prepareReservationAlertAudio();
       requestMobileNotificationPermission();
       reservationSaveInFlight.add(busKey);
+      reservationReplacementInFlight = otherReservations.length > 0;
       showToast(`🔄 ${selectedStopName} 하차 예약을 저장하고 있습니다.`);
-      db.ref('radar/reservations/' + busKey).set({
+      const reservationData = {
         busId: bus.id,
         route: bus.route,
         direction: getBusDirectionKey(bus) || null,
@@ -4391,7 +4594,27 @@
         alertDurationSeconds: alertPreference.durationSeconds,
         status: 'pending',
         reservedAt: Date.now()
-      }).then(() => {
+      };
+      let savePromise;
+      if (otherReservations.length > 0) {
+        // 기존 예약 삭제와 새 예약 생성을 한 번의 Firebase update로 처리하여
+        // 중간 통신 실패로 예약이 둘 다 남거나 둘 다 사라지지 않게 합니다.
+        const updates = {
+          [`radar/reservations/${busKey}`]: reservationData
+        };
+        otherReservations.forEach(({ key }) => {
+          updates[`radar/reservations/${key}`] = null;
+        });
+        savePromise = db.ref().update(updates);
+      } else {
+        savePromise = db.ref('radar/reservations/' + busKey).set(reservationData);
+      }
+      savePromise.then(() => {
+        otherReservations.forEach(({ key }) => {
+          delete currentReservations[key];
+          autoCancelledReservations.delete(key);
+        });
+        currentReservations[busKey] = reservationData;
         // 같은 버스에 이전 예약 알림 이력이 있어도 새 예약의 도착 알림은 다시 받아야 합니다.
         notifiedReservationKeys.delete(busKey);
         autoCancelledReservations.delete(busKey);
@@ -4409,6 +4632,7 @@
         }
       }).finally(() => {
         reservationSaveInFlight.delete(busKey);
+        reservationReplacementInFlight = false;
       });
     }
 

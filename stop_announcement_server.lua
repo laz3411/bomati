@@ -30,8 +30,11 @@ local ROUTE_ATTRIBUTES = { "Route", "route", "Line", "line", "노선" }
 local TRIGGER_NAME_HINTS = { "trigger", "touch", "stop", "정류장" }
 
 local PREVIEW_SOUND_PREFIX = "StopAnnouncement_"
-local SOUND_MIN_DISTANCE = 8
-local SOUND_MAX_DISTANCE = 250
+-- 버스 실내 길이 정도까지는 충분한 음량을 유지하고, 차 밖에서는 거리와 함께
+-- 빠르게 줄어들게 합니다. 원본 Sound의 Volume이 작아도 아래 최소 음량을 보장합니다.
+local SOUND_MIN_DISTANCE = 28
+local SOUND_MAX_DISTANCE = 120
+local SOUND_VOLUME_MINIMUM = 2.5
 local SOUND_VOLUME_DEFAULT = 0.95
 local SOUND_LOAD_TIMEOUT = 8
 local CONTACT_REARM_DELAY = 0.75
@@ -124,12 +127,27 @@ local function getBusModel(instance)
 end
 
 local function getBusEmitter(model)
-    if model.PrimaryPart then return model.PrimaryPart end
-    local seat = model:FindFirstChildWhichIsA("VehicleSeat", true)
-    if seat then return seat end
-    local driveSeat = model:FindFirstChild("DriveSeat", true)
-    if driveSeat and driveSeat:IsA("BasePart") then return driveSeat end
-    return model:FindFirstChildWhichIsA("BasePart", true)
+    -- PrimaryPart보다 실제 운전석을 우선합니다. 버스 모델마다 운전석 이름이
+    -- 달라도 DriveSeat/DriverSeat/운전석 또는 VehicleSeat를 모두 지원합니다.
+    for _, name in ipairs({ "DriveSeat", "DriverSeat", "운전석" }) do
+        local seat = model:FindFirstChild(name, true)
+        if seat and seat:IsA("BasePart") then
+            return seat
+        end
+    end
+
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("VehicleSeat") then
+            local seatName = string.lower(descendant.Name)
+            if string.find(seatName, "drive", 1, true) or string.find(seatName, "driver", 1, true) then
+                return descendant
+            end
+        end
+    end
+
+    local vehicleSeat = model:FindFirstChildWhichIsA("VehicleSeat", true)
+    if vehicleSeat then return vehicleSeat end
+    return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function normalizeSoundId(value)
@@ -198,19 +216,26 @@ local function createAnnouncementEmitter(busModel, stopId)
     local busEmitter = getBusEmitter(busModel)
     if not busEmitter then return nil end
 
-    -- 버스 내부에 넣지 않습니다. 차량의 AC6_FE_Sounds.Handler 같은 기존
-    -- 사운드 스크립트가 안내방송 Sound를 차량 효과음으로 오인하지 않게 합니다.
+    -- 기존 차량 효과음 스크립트와 분리하기 위해 Workspace에 두되, 운전석과
+    -- WeldConstraint로 연결해 차량을 따라 움직이는 3D 발신점으로 만듭니다.
     local emitter = Instance.new("Part")
     emitter.Name = "StopAnnouncementEmitter_" .. tostring(stopId)
     emitter.Size = Vector3.new(1, 1, 1)
     emitter.CFrame = busEmitter.CFrame
     emitter.Transparency = 1
-    emitter.Anchored = true
+    emitter.Anchored = false
+    emitter.Massless = true
     emitter.CanCollide = false
     emitter.CanTouch = false
     emitter.CanQuery = false
     emitter.CastShadow = false
     emitter.Parent = getAnnouncementEmitterFolder()
+
+    local weld = Instance.new("WeldConstraint")
+    weld.Name = "FollowDriverSeat"
+    weld.Part0 = emitter
+    weld.Part1 = busEmitter
+    weld.Parent = emitter
     return emitter
 end
 
@@ -238,7 +263,10 @@ local function playAnnouncement(busModel, sourceSound, stopId)
     sound.SoundId = sourceSoundId
     sound.Looped = false
     sound.TimePosition = 0
-    sound.Volume = sourceSound.Volume > 0 and sourceSound.Volume or SOUND_VOLUME_DEFAULT
+    local requestedVolume = sourceSound.Volume > 0 and sourceSound.Volume or SOUND_VOLUME_DEFAULT
+    sound.Volume = math.clamp(math.max(requestedVolume, SOUND_VOLUME_MINIMUM), 0, 4)
+    -- 원본이 조용한 SoundGroup에 묶여 있더라도 안내방송 복제본에는 적용하지 않습니다.
+    sound.SoundGroup = nil
     sound.RollOffMode = Enum.RollOffMode.InverseTapered
     sound.RollOffMinDistance = SOUND_MIN_DISTANCE
     sound.RollOffMaxDistance = SOUND_MAX_DISTANCE
@@ -297,7 +325,16 @@ local function playAnnouncement(busModel, sourceSound, stopId)
         if not sound.IsPlaying then
             warn(string.format("[정류장 안내 방송] Play 호출 후에도 재생되지 않음: StopId=%s SoundId=%s", tostring(stopId), tostring(sourceSoundId)))
         else
-            print(string.format("[정류장 안내 방송] 재생: 버스=%s StopId=%s SoundId=%s", busModel.Name, tostring(stopId), tostring(sourceSoundId)))
+            print(string.format(
+                "[정류장 안내 방송] 재생: 버스=%s StopId=%s 운전석=%s 음량=%.2f 감쇠=%d~%d SoundId=%s",
+                busModel.Name,
+                tostring(stopId),
+                emitter:GetFullName(),
+                sound.Volume,
+                SOUND_MIN_DISTANCE,
+                SOUND_MAX_DISTANCE,
+                tostring(sourceSoundId)
+            ))
         end
     end)
 end

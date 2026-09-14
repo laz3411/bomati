@@ -84,13 +84,6 @@ panelGradient.Color = ColorSequence.new({
 panelGradient.Rotation = 135
 panelGradient.Parent = panel
 
-local topGlow = Instance.new("Frame")
-topGlow.Size = UDim2.new(1, 0, 0, 3)
-topGlow.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
-topGlow.BackgroundTransparency = 0.12
-topGlow.BorderSizePixel = 0
-topGlow.Parent = panel
-
 local eyebrow = Instance.new("TextLabel")
 eyebrow.BackgroundTransparency = 1
 eyebrow.Position = UDim2.fromOffset(22, 21)
@@ -121,14 +114,29 @@ closeButton.Size = UDim2.fromOffset(34, 34)
 closeButton.BackgroundColor3 = Color3.fromRGB(30, 58, 86)
 closeButton.BackgroundTransparency = 0.18
 closeButton.BorderSizePixel = 0
-closeButton.Text = "✕"
-closeButton.TextColor3 = Color3.fromRGB(226, 232, 240)
-closeButton.Font = Enum.Font.GothamBold
-closeButton.TextSize = 15
+closeButton.Text = ""
 closeButton.ZIndex = 5
 closeButton.Parent = panel
 addCorner(closeButton, 11)
 addStroke(closeButton, Color3.fromRGB(186, 230, 253), 0.65, 1)
+
+-- 특수문자 글리프 대신 선 두 개로 X 아이콘을 구성합니다.
+-- 기기/폰트별 대체 문자 렌더링을 피할 수 있습니다.
+local function addCloseIconStroke(rotation)
+    local line = Instance.new("Frame")
+    line.AnchorPoint = Vector2.new(0.5, 0.5)
+    line.Position = UDim2.fromScale(0.5, 0.5)
+    line.Size = UDim2.fromOffset(14, 2)
+    line.BackgroundColor3 = Color3.fromRGB(226, 232, 240)
+    line.BorderSizePixel = 0
+    line.Rotation = rotation
+    line.ZIndex = 6
+    line.Parent = closeButton
+    addCorner(line, 2)
+end
+
+addCloseIconStroke(45)
+addCloseIconStroke(-45)
 
 local busInfo = Instance.new("TextLabel")
 busInfo.BackgroundTransparency = 1
@@ -222,6 +230,21 @@ confirmGradient.Color = ColorSequence.new(Color3.fromRGB(14, 165, 233), Color3.f
 confirmGradient.Rotation = 115
 confirmGradient.Parent = confirmButton
 
+local stopButton = Instance.new("TextButton")
+stopButton.Name = "StopService"
+stopButton.Position = UDim2.new(0, 22, 1, -66)
+stopButton.Size = UDim2.new(0.34, -12, 0, 46)
+stopButton.BackgroundColor3 = Color3.fromRGB(190, 24, 93)
+stopButton.BorderSizePixel = 0
+stopButton.Text = "운행 중지"
+stopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+stopButton.Font = Enum.Font.GothamBold
+stopButton.TextSize = 14
+stopButton.Visible = false
+stopButton.Parent = panel
+addCorner(stopButton, 14)
+addStroke(stopButton, Color3.fromRGB(254, 205, 211), 0.45, 1)
+
 local toastGui = Instance.new("ScreenGui")
 toastGui.Name = "BusRouteDirectionToastGui"
 toastGui.ResetOnSpawn = false
@@ -313,6 +336,14 @@ local function updateDirection(direction, instant)
     downButton.TextColor3 = selectedDirection == "down" and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
     local isChanging = currentBus and currentBus:GetAttribute("RouteDirectionConfirmed") == true
     confirmButton.Text = (selectedDirection == "up" and "상행" or "하행") .. (isChanging and " 방향 변경" or " 운행 시작")
+    stopButton.Visible = isChanging == true
+    if isChanging then
+        confirmButton.Position = UDim2.new(0.34, 8, 1, -66)
+        confirmButton.Size = UDim2.new(0.66, -30, 0, 46)
+    else
+        confirmButton.Position = UDim2.new(0, 22, 1, -66)
+        confirmButton.Size = UDim2.new(1, -44, 0, 46)
+    end
 end
 
 local toastSequence = 0
@@ -351,6 +382,9 @@ local function showForBus(model)
     status.TextColor3 = Color3.fromRGB(148, 163, 184)
     confirmButton.Active = true
     confirmButton.AutoButtonColor = true
+    stopButton.Active = true
+    stopButton.AutoButtonColor = true
+    stopButton.Text = "운행 중지"
     updateDirection(model:GetAttribute("RouteDirection") or "up", true)
     settingsButton.Visible = false
     screenGui.Enabled = true
@@ -415,21 +449,48 @@ confirmButton.Activated:Connect(function()
     confirmButton.Text = "운행 정보를 확인하는 중..."
     status.Text = "서버에서 운전석과 버스 정보를 확인하고 있습니다."
     status.TextColor3 = Color3.fromRGB(186, 230, 253)
-    routeDirectionRemote:FireServer(currentBus, selectedDirection)
+    routeDirectionRemote:FireServer(currentBus, selectedDirection, "start")
+end)
+
+stopButton.Activated:Connect(function()
+    if requestPending or not currentBus then return end
+    requestPending = true
+    stopButton.Active = false
+    stopButton.AutoButtonColor = false
+    stopButton.Text = "중지 중..."
+    status.Text = "서버에서 운행 중지 요청을 확인하고 있습니다."
+    status.TextColor3 = Color3.fromRGB(254, 205, 211)
+    routeDirectionRemote:FireServer(currentBus, selectedDirection, "stop")
 end)
 
 routeDirectionRemote.OnClientEvent:Connect(function(result)
     if typeof(result) ~= "table" then return end
     requestPending = false
     if result.success == true then
-        screenGui.Enabled = false
         showToast(result.message or "운행을 시작합니다.")
-        currentBus = nil
-        settingsButton.Visible = activeDriverBus ~= nil and activeDriverBus:IsDescendantOf(workspace)
+        if result.action == "stop" then
+            stopButton.Active = true
+            stopButton.AutoButtonColor = true
+            stopButton.Text = "운행 중지"
+            if activeDriverBus and activeDriverBus:IsDescendantOf(workspace) then
+                showForBus(activeDriverBus)
+            else
+                screenGui.Enabled = false
+                currentBus = nil
+                settingsButton.Visible = false
+            end
+        else
+            screenGui.Enabled = false
+            currentBus = nil
+            settingsButton.Visible = activeDriverBus ~= nil and activeDriverBus:IsDescendantOf(workspace)
+        end
         return
     end
     confirmButton.Active = true
     confirmButton.AutoButtonColor = true
+    stopButton.Active = true
+    stopButton.AutoButtonColor = true
+    stopButton.Text = "운행 중지"
     updateDirection(selectedDirection, true)
     status.Text = tostring(result.message or "운행 방향을 저장하지 못했습니다.")
     status.TextColor3 = Color3.fromRGB(253, 164, 175)

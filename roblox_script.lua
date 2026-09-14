@@ -1693,38 +1693,61 @@ end
 
 local lastRouteDirectionRequest = {}
 
-local function replyRouteDirection(player, success, message, model, direction)
+local function replyRouteDirection(player, success, message, model, direction, action)
     routeDirectionRemote:FireClient(player, {
         success = success,
         message = message,
         busId = model and model:GetFullName() or nil,
         route = model and tostring(getValueFromInstance(model, { "route", "Route", "ROUTE", "Line", "line", "노선" }, "")) or "",
-        direction = direction
+        direction = direction,
+        action = action or "start",
+        inService = model and model:GetAttribute("RouteDirectionConfirmed") == true or false
     })
 end
 
-routeDirectionRemote.OnServerEvent:Connect(function(player, requestedModel, requestedDirection)
+routeDirectionRemote.OnServerEvent:Connect(function(player, requestedModel, requestedDirection, requestedAction)
     local now = os.clock()
     if now - (lastRouteDirectionRequest[player] or 0) < 0.5 then return end
     lastRouteDirectionRequest[player] = now
 
+    local action = tostring(requestedAction or "start"):lower()
+    if action ~= "stop" then action = "start" end
     local direction = normalizeRouteDirection(requestedDirection)
-    if direction ~= "up" and direction ~= "down" then
-        replyRouteDirection(player, false, "상행 또는 하행을 선택해 주세요.", nil, nil)
-        return
-    end
 
     local character = player.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local seat = humanoid and humanoid.SeatPart
     if not seat or not seat:IsA("VehicleSeat") then
-        replyRouteDirection(player, false, "운전석에 앉은 상태에서만 운행을 시작할 수 있습니다.", nil, nil)
+        local seatMessage = action == "stop"
+            and "운전석에 앉은 상태에서만 운행을 중지할 수 있습니다."
+            or "운전석에 앉은 상태에서만 운행을 시작할 수 있습니다."
+        replyRouteDirection(player, false, seatMessage, nil, nil, action)
         return
     end
 
     local model = getVehicleModel(seat)
     if not model or not model:IsDescendantOf(workspace) or requestedModel ~= model then
-        replyRouteDirection(player, false, "현재 운전 중인 버스를 확인할 수 없습니다.", nil, nil)
+        replyRouteDirection(player, false, "현재 운전 중인 버스를 확인할 수 없습니다.", nil, nil, action)
+        return
+    end
+
+    if action == "stop" then
+        if model:GetAttribute("RouteDirectionConfirmed") ~= true then
+            replyRouteDirection(player, false, "이미 운행이 중지된 버스입니다.", model, getBusRouteDirection(model), action)
+            return
+        end
+        model:SetAttribute("RouteDirectionConfirmed", false)
+        model:SetAttribute("RouteDirectionStoppedAt", DateTime.now().UnixTimestampMillis)
+        model:SetAttribute("RouteDirectionStoppedByUserId", player.UserId)
+        busRouteProgress[model:GetFullName()] = nil
+        local routeName = tostring(getValueFromInstance(model, { "route", "Route", "ROUTE", "Line", "line", "노선" }, ""))
+        print(string.format("[버스 운행 중지] %s / %s번 / 운전자 %s", model.Name, routeName, player.Name))
+        replyRouteDirection(player, true, string.format("%s번 버스 운행을 중지했습니다.", routeName ~= "" and routeName or "해당"), model, getBusRouteDirection(model), action)
+        return
+    end
+
+    if direction ~= "up" and direction ~= "down" then
+        replyRouteDirection(player, false, "상행 또는 하행을 선택해 주세요.", model, nil, action)
         return
     end
 
@@ -1742,7 +1765,7 @@ routeDirectionRemote.OnServerEvent:Connect(function(player, requestedModel, requ
     local routeName = tostring(getValueFromInstance(model, { "route", "Route", "ROUTE", "Line", "line", "노선" }, ""))
     local actionLabel = wasAlreadyInService and "방향 변경" or "운행 시작"
     print(string.format("[버스 %s] %s / %s번 %s / 운전자 %s", actionLabel, model.Name, routeName, directionLabel, player.Name))
-    replyRouteDirection(player, true, string.format("%s번 %s%s.", routeName ~= "" and routeName or "버스", directionLabel, wasAlreadyInService and "으로 변경했습니다" or " 운행을 시작합니다"), model, direction)
+    replyRouteDirection(player, true, string.format("%s번 %s%s.", routeName ~= "" and routeName or "버스", directionLabel, wasAlreadyInService and "으로 변경했습니다" or " 운행을 시작합니다"), model, direction, action)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
@@ -1755,18 +1778,6 @@ local function getVehicleCFrame(model)
     end
 
     return model:GetPivot()
-end
-
-local function busHasActiveDriver(model)
-    for _, descendant in ipairs(model:GetDescendants()) do
-        if descendant:IsA("VehicleSeat") and descendant.Occupant then
-            local character = descendant.Occupant.Parent
-            if character and Players:GetPlayerFromCharacter(character) then
-                return true
-            end
-        end
-    end
-    return false
 end
 
 local function findFirstMovingPart(model)
@@ -2246,9 +2257,10 @@ local function collectBusData()
             end
             local routeDirection = getBusRouteDirection(model)
             local routeDirectionConfirmed = model:GetAttribute("RouteDirectionConfirmed") == true
+            -- 운행 시작/중지는 운전자 GUI 버튼으로만 제어합니다. 운전자가 잠시
+            -- 내려도 시작 상태를 유지하여 지도와 기존 하차 예약이 끊기지 않습니다.
             local isInService = routeDirectionConfirmed
                 and (routeDirection == "up" or routeDirection == "down")
-                and busHasActiveDriver(model)
             local busLicense = getBusLicense(model)
             -- 하차벨 시스템 초기화 (ProximityPrompt 등 연결)
             local bellSystem = getOrCreateBusBellSystem(model)
