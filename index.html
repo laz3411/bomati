@@ -45,6 +45,84 @@
       touch-action: none;
     }
 
+    /* 앱 시작·게임 접속 대기 상태. 지도와 조작 UI보다 위에서 전체 화면을 가립니다. */
+    .app-loading-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 200;
+      display: grid;
+      place-items: center;
+      padding: max(28px, env(safe-area-inset-top, 0px)) 24px max(28px, env(safe-area-inset-bottom, 0px));
+      background:
+        radial-gradient(circle at 50% 24%, rgba(14, 165, 233, .18), transparent 34%),
+        linear-gradient(160deg, #102743 0%, #091827 48%, #050b14 100%);
+      color: #f8fafc;
+      opacity: 1;
+      visibility: visible;
+      transition: opacity .32s ease, visibility .32s ease;
+    }
+
+    .app-loading-overlay.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .app-loading-card {
+      width: min(100%, 330px);
+      text-align: center;
+    }
+
+    .app-loading-logo {
+      display: block;
+      width: min(190px, 54vw);
+      max-height: 132px;
+      margin: 0 auto 28px;
+      object-fit: contain;
+      filter: drop-shadow(0 12px 24px rgba(0, 0, 0, .34));
+    }
+
+    .app-loading-spinner {
+      width: 34px;
+      height: 34px;
+      margin: 0 auto 18px;
+      border: 3px solid rgba(186, 230, 253, .2);
+      border-top-color: #38bdf8;
+      border-right-color: #7dd3fc;
+      border-radius: 50%;
+      animation: appLoadingSpin .8s linear infinite;
+    }
+
+    .app-loading-eyebrow {
+      margin-bottom: 8px;
+      color: #7dd3fc;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .14em;
+    }
+
+    .app-loading-title {
+      font-size: 21px;
+      font-weight: 800;
+      letter-spacing: -.03em;
+    }
+
+    .app-loading-copy {
+      margin: 10px auto 0;
+      color: #b7c8da;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .app-loading-overlay.is-maintenance .app-loading-spinner {
+      border-top-color: #fbbf24;
+      border-right-color: #fcd34d;
+    }
+
+    .app-loading-overlay.is-maintenance .app-loading-eyebrow { color: #fcd34d; }
+
+    @keyframes appLoadingSpin { to { transform: rotate(360deg); } }
+
     /* Firebase 연결 상태를 숨기지 않고 화면에 표시해 문제를 바로 확인합니다. */
     .firebase-status {
       position: absolute;
@@ -1256,6 +1334,15 @@
 <body>
   <div id="viewport">
     <canvas id="mapCanvas"></canvas>
+    <section id="appLoadingOverlay" class="app-loading-overlay" aria-live="polite" aria-busy="true">
+      <div class="app-loading-card">
+        <img class="app-loading-logo" src="https://raw.githubusercontent.com/laz3411/bomati/fix/%EB%B6%80%EB%A7%88%ED%8B%B0%20%EB%A1%9C%EA%B3%A0.png" alt="부마티 로고">
+        <div class="app-loading-spinner" aria-hidden="true"></div>
+        <p id="appLoadingEyebrow" class="app-loading-eyebrow">BOMATI</p>
+        <h1 id="appLoadingTitle" class="app-loading-title">앱을 준비하고 있어요</h1>
+        <p id="appLoadingCopy" class="app-loading-copy">실시간 운행 정보를 확인하는 중입니다.</p>
+      </div>
+    </section>
     <button id="demoAccountBtn" class="demo-account-btn" type="button" style="display:none;"></button>
     <div id="accountMenu" class="account-menu hidden">
       <div id="accountMenuName" class="account-menu-name"></div>
@@ -1577,6 +1664,43 @@
     const canvas = document.getElementById('mapCanvas');
     const ctx = canvas.getContext('2d');
     let vW = 0, vH = 0;
+    const appLoadingOverlay = document.getElementById('appLoadingOverlay');
+    const appLoadingEyebrow = document.getElementById('appLoadingEyebrow');
+    const appLoadingTitle = document.getElementById('appLoadingTitle');
+    const appLoadingCopy = document.getElementById('appLoadingCopy');
+    let appLoadingState = 'loading';
+    let appLoadingTimer = null;
+
+    function showAppLoading(state, title, copy) {
+      if (!appLoadingOverlay) return;
+      if (appLoadingTimer) {
+        clearTimeout(appLoadingTimer);
+        appLoadingTimer = null;
+      }
+      appLoadingState = state;
+      appLoadingOverlay.classList.remove('is-hidden');
+      appLoadingOverlay.classList.toggle('is-maintenance', state === 'maintenance');
+      appLoadingOverlay.setAttribute('aria-busy', 'true');
+      if (appLoadingEyebrow) appLoadingEyebrow.textContent = state === 'maintenance' ? 'SERVICE NOTICE' : 'BOMATI';
+      if (appLoadingTitle) appLoadingTitle.textContent = title;
+      if (appLoadingCopy) appLoadingCopy.textContent = copy;
+    }
+
+    function showMaintenanceScreen(copy) {
+      showAppLoading('maintenance', '현재 점검 중입니다', copy || '테스터가 Roblox 체험에 접속하면 실시간 지도를 바로 불러옵니다.');
+    }
+
+    function revealLiveMap() {
+      if (!appLoadingOverlay || appLoadingState === 'ready') return;
+      showAppLoading('loading', '운행 정보를 불러오는 중', '최신 위치와 운행 정보를 지도에 반영하고 있습니다.');
+      appLoadingTimer = setTimeout(() => {
+        if (!isRadarLive) return;
+        appLoadingOverlay.classList.add('is-hidden');
+        appLoadingOverlay.setAttribute('aria-busy', 'false');
+        appLoadingState = 'ready';
+        appLoadingTimer = null;
+      }, 550);
+    }
 
     function applyViewport() {
       // visualViewport를 우선 감지하여 모바일 주소창/하단바/가상키보드 변화에 대응
@@ -2682,6 +2806,8 @@
           setFirebaseStatus('Firebase 연결됨 · 위치 수신 대기 중', 'ok');
         } else {
           setFirebaseStatus('Firebase 재연결 중...', '');
+          // 연결이 끊긴 동안에는 마지막 지도를 노출하지 않고 대기 화면을 유지합니다.
+          showMaintenanceScreen('실시간 서버에 다시 연결하고 있습니다. 잠시만 기다려 주세요.');
         }
       });
 
@@ -2849,6 +2975,7 @@
           isRadarLive = false;
           clearGameMapData();
           setFirebaseStatus('게임 접속 대기 중 · 이전 위치 데이터 숨김', '');
+          showMaintenanceScreen();
           return;
         }
 
@@ -2873,6 +3000,7 @@
             `대상 서버 대기 중 · 현재 ${receivedNames.join(', ') || '다른 사용자'} 수신`,
             ''
           );
+          showMaintenanceScreen('지정된 운전자의 Roblox 게임 접속을 기다리고 있습니다.');
           return;
         }
         lastRejectedRadarSignature = '';
@@ -2884,6 +3012,7 @@
           isRadarLive = false;
           clearGameMapData();
           setFirebaseStatus('게임 접속 대기 중 · 대상 플레이어 미확인', '');
+          showMaintenanceScreen();
           return;
         }
         isRadarLive = true;
@@ -2920,6 +3049,9 @@
           }));
         const visibleBuses = dedupeBusPayloads(rawBuses);
         replaceBuses(visibleBuses);
+        // 예약한 버스가 아닌 다른 차량에 실제 탑승한 순간에는 이전 차량의
+        // 예약을 즉시 취소합니다. 정류장 이탈 판정을 기다리지 않습니다.
+        cancelReservationsForDifferentBoardedBus();
 
         // 이미 등록된 버스 인스턴스에도 고상 플래그 즉시 갱신
         if (latestBellInfo && (latestBellInfo.isHighFloor === true || latestBellInfo.mode === 'high')) {
@@ -2938,9 +3070,12 @@
         // 최신 Firebase 프레임으로 갱신합니다.
         scheduleBusExplorerRender();
         scheduleReservationSheetRender();
+        // 점검 화면에서 유효한 최신 프레임을 받았을 때만 지도 화면으로 전환합니다.
+        revealLiveMap();
       }, (error) => {
         console.error('[Firebase] /radar 읽기 실패:', error);
         setFirebaseStatus('Firebase 읽기 실패 · 규칙/URL 확인 필요', 'error');
+        showMaintenanceScreen('실시간 운행 정보를 확인할 수 없습니다. 잠시 후 다시 연결합니다.');
         showToast('Firebase 읽기 실패: 데이터베이스 규칙과 URL을 확인하세요.');
       });
 
@@ -3121,6 +3256,18 @@
     function getBusVehicleNumber(bus) {
       const number = bus?.vehicleNumber ?? bus?.VehicleNumber ?? bus?.busLicense ?? bus?.BusLicense ?? bus?.vehicleNo ?? bus?.VehicleNo;
       return number === undefined || number === null || String(number).trim() === '' ? '' : String(number).trim();
+    }
+
+    function toFirebaseKey(value) {
+      return String(value ?? '').replace(/[.#$/[\]]/g, '_');
+    }
+
+    function getBusReservationKey(bus) {
+      const base = toFirebaseKey(bus?.id || bus?.name || 'bus');
+      const vehicle = toFirebaseKey(getBusVehicleNumber(bus));
+      // 이름이 같은 Roblox 버스는 FullName도 같을 수 있어 차량번호를 예약 키에
+      // 포함합니다. 차량번호가 없는 차량은 이전 키 형식을 그대로 사용합니다.
+      return vehicle ? `${base}__vehicle_${vehicle}` : base;
     }
 
     function formatBusLicense(bus) {
@@ -3689,6 +3836,7 @@
     // 모바일에서는 탭이 연속 전달될 수 있어, 같은 버스의 set 요청이 겹치지 않게 합니다.
     const reservationSaveInFlight = new Set();
     let reservationReplacementInFlight = false;
+    let boardedReservationCancellationInFlight = false;
     let reservationSwitchResolver = null;
     const reservationNotificationModes = new Map();
     const RESERVATION_NOTIFICATION_MODES = Object.freeze({
@@ -3734,21 +3882,131 @@
       return status === 'pending' || status === 'triggered';
     }
 
-    function getOtherActiveReservationEntries(bus) {
-      if (!bus) return [];
-      const busKey = String(bus.id).replace(/[.#$/[\]]/g, '_');
-      return Object.entries(currentReservations).filter(([key, reservation]) => (
-        isActiveReservation(reservation)
-        && key !== busKey
-        && String(reservation.busId || '') !== String(bus.id)
-      )).map(([key, reservation]) => ({ key, reservation }));
+    function reservationTargetsBus(key, reservation, bus) {
+      if (!reservation || !bus) return false;
+      const busId = String(bus.id || '');
+      const busKey = getBusReservationKey(bus);
+      const legacyBusKey = toFirebaseKey(busId);
+      const reservedVehicle = String(reservation.vehicleNumber ?? '').trim();
+      const liveVehicle = String(getBusVehicleNumber(bus) ?? '').trim();
+      if (reservedVehicle || liveVehicle) {
+        // Roblox에서는 이름이 같은 형제 Model의 GetFullName도 같을 수 있으므로
+        // 차량번호가 있으면 경로 ID보다 차량번호를 우선합니다.
+        if (!reservedVehicle || !liveVehicle || reservedVehicle !== liveVehicle) return false;
+        if (String(reservation.route || '') !== String(bus.route || '')) return false;
+        const reservedDirection = getBusDirectionKey({ direction: reservation.direction });
+        const liveDirection = getBusDirectionKey(bus);
+        return !reservedDirection || !liveDirection || reservedDirection === liveDirection;
+      }
+
+      // 차량번호가 양쪽 모두 없는 이전 데이터만 경로 ID로 호환합니다.
+      return String(key) === busKey
+        || String(key) === legacyBusKey
+        || String(reservation.busId || '') === busId;
+    }
+
+    function reservationTargetsStop(reservation, stop) {
+      if (!reservation || !stop) return false;
+      const reservedId = reservation.targetStopId;
+      const stopId = stop.stopId ?? stop.stopID ?? stop.stationId ?? stop.stationID;
+      if (reservedId !== undefined && reservedId !== null && String(reservedId) !== ''
+          && stopId !== undefined && stopId !== null && String(stopId) !== '') {
+        return String(reservedId) === String(stopId);
+      }
+      return Number(reservation.targetStopIndex) === Number(stop.index);
+    }
+
+    function getConflictingActiveReservationEntries(bus, selectedStop) {
+      if (!bus || !selectedStop) return [];
+      return Object.entries(currentReservations)
+        .filter(([key, reservation]) => (
+          isActiveReservation(reservation)
+          && !(reservationTargetsBus(key, reservation, bus) && reservationTargetsStop(reservation, selectedStop))
+        ))
+        .map(([key, reservation]) => ({ key, reservation }));
     }
 
     function formatReservationBusLabel(entry) {
       const matchedBus = findBusForReservation(entry.key, entry.reservation);
       const route = String(entry.reservation.route || matchedBus?.route || '다른 버스');
-      const license = matchedBus ? formatBusLicense(matchedBus) : '';
-      return `${route}번${license ? ` · ${license}` : ''}`;
+      const reservedVehicle = String(entry.reservation.vehicleNumber ?? '').trim();
+      const license = reservedVehicle
+        ? formatBusLicense({ vehicleNumber: reservedVehicle })
+        : (matchedBus ? formatBusLicense(matchedBus) : '');
+      const stop = String(entry.reservation.targetStopName || entry.reservation.targetStopId || '').trim();
+      return `${route}번${license ? ` · ${license}` : ''}${stop ? ` · ${stop}` : ''}`;
+    }
+
+    function reservationTargetsCurrentBoardedBus(key, reservation, boardedBus) {
+      if (boardedBus) {
+        const identityMatches = reservationTargetsBus(key, reservation, boardedBus);
+        const hasVehicleIdentity = String(reservation?.vehicleNumber ?? '').trim() !== ''
+          || String(getBusVehicleNumber(boardedBus) ?? '').trim() !== '';
+        // 차량번호가 있는 데이터는 FullName이 우연히 같아도 ID 보조 비교로
+        // 되돌아가지 않습니다.
+        if (hasVehicleIdentity) return identityMatches;
+        if (identityMatches) return true;
+      }
+      const reservedVehicle = String(reservation?.vehicleNumber ?? '').trim();
+      const boardedVehicle = String(latestBoardingInfo?.vehicleNumber ?? '').trim();
+      if (reservedVehicle || boardedVehicle) {
+        if (!reservedVehicle || !boardedVehicle || reservedVehicle !== boardedVehicle) return false;
+        const reservedRoute = String(reservation?.route ?? '').trim();
+        const boardedRoute = String(latestBoardingInfo?.route ?? '').trim();
+        if (reservedRoute && boardedRoute && reservedRoute !== boardedRoute) return false;
+        const reservedDirection = getBusDirectionKey({ direction: reservation?.direction });
+        const boardedDirection = getBusDirectionKey({ direction: latestBoardingInfo?.direction });
+        return !reservedDirection || !boardedDirection || reservedDirection === boardedDirection;
+      }
+      const boardingIds = [
+        boardedBusId,
+        latestBoardingInfo && latestBoardingInfo.busId,
+        latestBoardingInfo && latestBoardingInfo.busName
+      ].filter((value) => value !== undefined && value !== null && String(value) !== '')
+        .map((value) => String(value));
+      const reservedBusId = String(reservation && reservation.busId || '');
+      return boardingIds.includes(reservedBusId)
+        || boardingIds.some((id) => String(key) === toFirebaseKey(id));
+    }
+
+    function cancelReservationsForDifferentBoardedBus() {
+      if (!db || !boardedBusId) return;
+      const boardedBus = [...buses.values()].find((bus) => isBoardedBus(bus)) || null;
+      const conflicts = Object.entries(currentReservations)
+        .filter(([key, reservation]) => (
+          isActiveReservation(reservation)
+          && !cancellingReservationKeys.has(key)
+          && !reservationTargetsCurrentBoardedBus(key, reservation, boardedBus)
+        ))
+        .map(([key, reservation]) => ({ key, reservation }));
+      if (conflicts.length === 0) return;
+
+      boardedReservationCancellationInFlight = true;
+      const updates = {};
+      conflicts.forEach(({ key }) => {
+        cancellingReservationKeys.add(key);
+        updates[`radar/reservations/${key}`] = null;
+        delete currentReservations[key];
+        autoCancelledReservations.delete(key);
+        notifiedReservationKeys.delete(key);
+      });
+      scheduleReservationSheetRender();
+
+      db.ref().update(updates).then(() => {
+        showToast(conflicts.length === 1
+          ? '다른 버스 탑승이 확인되어 이전 하차 예약을 취소했습니다.'
+          : `다른 버스 탑승이 확인되어 이전 하차 예약 ${conflicts.length}건을 취소했습니다.`);
+      }).catch((error) => {
+        console.error('[Firebase] 탑승 차량 변경 예약 취소 실패:', error);
+        // 다음 실시간 수신 때 다시 시도할 수 있도록 로컬 상태를 복원합니다.
+        conflicts.forEach(({ key, reservation }) => {
+          if (!currentReservations[key]) currentReservations[key] = reservation;
+        });
+        showToast('이전 버스의 하차 예약 취소에 실패했습니다. 연결을 확인해 주세요.');
+      }).finally(() => {
+        conflicts.forEach(({ key }) => cancellingReservationKeys.delete(key));
+        boardedReservationCancellationInFlight = false;
+      });
     }
 
     function scheduleReservationSheetRender() {
@@ -3875,6 +4133,17 @@
 
     function isBoardedBus(bus) {
       if (!bus || !boardedBusId) return false;
+
+      const boardedVehicle = String(latestBoardingInfo?.vehicleNumber ?? '').trim();
+      const liveVehicle = String(getBusVehicleNumber(bus) ?? '').trim();
+      if (boardedVehicle || liveVehicle) {
+        if (!boardedVehicle || !liveVehicle || boardedVehicle !== liveVehicle) return false;
+        const boardedRoute = String(latestBoardingInfo?.route ?? '').trim();
+        if (boardedRoute && String(bus.route || '').trim() !== boardedRoute) return false;
+        const boardedDirection = getBusDirectionKey({ direction: latestBoardingInfo?.direction });
+        const liveDirection = getBusDirectionKey(bus);
+        return !boardedDirection || !liveDirection || boardedDirection === liveDirection;
+      }
 
       // radar/bell 양쪽 모두 실제 차량의 FullName을 우선 전송합니다. 다만 레이더
       // 갱신 사이에 bell 데이터가 먼저 도착할 수 있으므로, 그 경우에는 고유한
@@ -4073,37 +4342,31 @@
 
     function findBusForReservation(key, reservation) {
       for (const bus of buses.values()) {
-        const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
-        if (busKey === key || bus.id === reservation.busId) return bus;
+        if (reservationTargetsBus(key, reservation, bus)) return bus;
       }
       return null;
     }
 
     function findReservationEntryForBus(bus) {
       if (!bus) return null;
-      const directKey = bus.id.replace(/[.#$/[\]]/g, '_');
-      if (currentReservations[directKey]) {
+      const directKey = getBusReservationKey(bus);
+      if (currentReservations[directKey]
+          && reservationTargetsBus(directKey, currentReservations[directKey], bus)) {
         return { key: directKey, reservation: currentReservations[directKey] };
+      }
+      const legacyKey = toFirebaseKey(bus.id);
+      if (legacyKey !== directKey
+          && currentReservations[legacyKey]
+          && reservationTargetsBus(legacyKey, currentReservations[legacyKey], bus)) {
+        return { key: legacyKey, reservation: currentReservations[legacyKey] };
       }
 
       for (const [key, reservation] of Object.entries(currentReservations)) {
-        if (reservation && String(reservation.busId || '') === String(bus.id)) {
+        if (reservationTargetsBus(key, reservation, bus)) {
           return { key, reservation };
         }
       }
-
-      // 탑승 전 예약 이후 Roblox 차량 Model이 복제·개명된 짧은 구간에는
-      // 실제 탑승 버스와 노선이 같은 승차 대기 예약 하나만 연결해 표시합니다.
-      if (!isBoardedBus(bus)) return null;
-      const routeMatches = Object.entries(currentReservations).filter(([, reservation]) => (
-        reservation
-        && (reservation.status === undefined || reservation.status === 'pending')
-        && reservation.awaitingBoarding === true
-        && String(reservation.route || '') === String(bus.route || '')
-      ));
-      return routeMatches.length === 1
-        ? { key: routeMatches[0][0], reservation: routeMatches[0][1] }
-        : null;
+      return null;
     }
 
     function getReservationOriginStop(reservation) {
@@ -4244,6 +4507,10 @@
       if (!db) throw new Error('Firebase database is not initialized');
       db.ref('radar/reservations').on('value', (snap) => {
         currentReservations = snap.val() || {};
+        // 삭제 요청 처리 중인 예약이 오래된 실시간 스냅샷으로 잠깐 되살아나
+        // 벨/알림을 작동시키지 않게 로컬 화면에서도 계속 제외합니다.
+        cancellingReservationKeys.forEach((key) => delete currentReservations[key]);
+        cancelReservationsForDifferentBoardedBus();
         scheduleReservationSheetRender();
         checkTriggeredReservations();
       }, (error) => {
@@ -4360,7 +4627,6 @@
         currentStopEl.textContent = bus.currentStop ? `${bus.currentStop.name} (정류장 접근/정차 중)` : '운행 중 (다음 정류장 이동)';
       }
 
-      const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
       const reservationEntry = findReservationEntryForBus(bus);
       const currentRes = reservationEntry && reservationEntry.reservation;
       const boarding = getBoardingEligibility(bus);
@@ -4492,6 +4758,10 @@
         showToast('Firebase 연결 전입니다. 잠시 후 다시 시도하세요.');
         return;
       }
+      if (boardedReservationCancellationInFlight) {
+        showToast('다른 버스의 이전 예약을 취소하고 있습니다. 잠시 후 다시 눌러 주세요.');
+        return;
+      }
       if (isBusBellEngaged(bus)) {
         showToast('이미 바로 하차 또는 하차벨이 작동 중이라 하차 예약을 할 수 없습니다.');
         renderReservationSheet();
@@ -4530,33 +4800,28 @@
         showToast('현재 정류장 또는 매우 가까운 정류장은 하차 예약할 수 없습니다.');
         return;
       }
-      const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      const busKey = getBusReservationKey(bus);
       if (reservationSaveInFlight.has(busKey)) {
         showToast('하차 예약을 저장하고 있습니다. 잠시만 기다려 주세요.');
         return;
       }
       const selectedStopId = selectedStop.stopId ?? selectedStop.stopID ?? selectedStop.stationId ?? selectedStop.stationID;
       const selectedStopName = String(selectedStop.name || stopName || ('정류장 ' + selectedStop.index));
-      const otherReservations = getOtherActiveReservationEntries(bus);
-      if (otherReservations.length > 0) {
-        // 탑승 중에는 다른 차량 예약을 자동으로 지우거나 교체하지 않습니다.
-        if (boarding.isOnBus || boardedBusId) {
-          showToast('다른 버스의 하차 예약이 남아 있어 새 예약을 만들 수 없습니다. 기존 예약을 먼저 취소해 주세요.');
-          return;
-        }
+      const conflictingReservations = getConflictingActiveReservationEntries(bus, selectedStop);
+      if (conflictingReservations.length > 0) {
         if (reservationReplacementInFlight) {
           showToast('기존 예약을 변경하고 있습니다. 잠시만 기다려 주세요.');
           return;
         }
-        const existingLabel = otherReservations.length === 1
-          ? formatReservationBusLabel(otherReservations[0])
-          : `다른 버스 ${otherReservations.length}대의`;
+        const existingLabel = conflictingReservations.length === 1
+          ? formatReservationBusLabel(conflictingReservations[0])
+          : `${conflictingReservations.length}건의 기존 하차`;
         const nextLabel = `${bus.route || '버스'}번 · ${formatBusLicense(bus)} ${selectedStopName}`;
         const confirmed = await confirmReservationSwitch(existingLabel, nextLabel);
         if (!confirmed) return;
         // 확인창이 열린 동안 탑승 상태가 바뀌었다면 교체를 중단합니다.
-        if (boardedBusId) {
-          showToast('버스 탑승이 확인되어 다른 버스 예약 변경을 중단했습니다.');
+        if (boardedBusId && !isBoardedBus(bus)) {
+          showToast('다른 버스 탑승이 확인되어 예약 변경을 중단했습니다.');
           return;
         }
       }
@@ -4567,7 +4832,7 @@
       prepareReservationAlertAudio();
       requestMobileNotificationPermission();
       reservationSaveInFlight.add(busKey);
-      reservationReplacementInFlight = otherReservations.length > 0;
+      reservationReplacementInFlight = conflictingReservations.length > 0;
       showToast(`🔄 ${selectedStopName} 하차 예약을 저장하고 있습니다.`);
       const reservationData = {
         busId: bus.id,
@@ -4596,23 +4861,25 @@
         reservedAt: Date.now()
       };
       let savePromise;
-      if (otherReservations.length > 0) {
+      if (conflictingReservations.length > 0) {
         // 기존 예약 삭제와 새 예약 생성을 한 번의 Firebase update로 처리하여
         // 중간 통신 실패로 예약이 둘 다 남거나 둘 다 사라지지 않게 합니다.
-        const updates = {
-          [`radar/reservations/${busKey}`]: reservationData
-        };
-        otherReservations.forEach(({ key }) => {
+        const updates = {};
+        conflictingReservations.forEach(({ key }) => {
           updates[`radar/reservations/${key}`] = null;
         });
+        // 같은 버스의 다른 정류장을 변경하는 경우 동일한 Firebase 키를
+        // 사용하므로 삭제 항목을 만든 뒤 새 예약을 마지막에 기록합니다.
+        updates[`radar/reservations/${busKey}`] = reservationData;
         savePromise = db.ref().update(updates);
       } else {
         savePromise = db.ref('radar/reservations/' + busKey).set(reservationData);
       }
       savePromise.then(() => {
-        otherReservations.forEach(({ key }) => {
+        conflictingReservations.forEach(({ key }) => {
           delete currentReservations[key];
           autoCancelledReservations.delete(key);
+          notifiedReservationKeys.delete(key);
         });
         currentReservations[busKey] = reservationData;
         // 같은 버스에 이전 예약 알림 이력이 있어도 새 예약의 도착 알림은 다시 받아야 합니다.
@@ -4651,7 +4918,7 @@
         return;
       }
 
-      const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
+      const busKey = getBusReservationKey(bus);
       const reservationEntry = findReservationEntryForBus(bus);
       const reservationKey = reservationEntry ? reservationEntry.key : busKey;
       const useAccessibilityBell = !!(demoProfile && demoProfile.accessibility && !bus.isHighFloor);
@@ -4700,7 +4967,7 @@
       const reservationEntry = findReservationEntryForBus(bus);
       const reservationKey = reservationEntry
         ? reservationEntry.key
-        : busId.replace(/[.#$/[\]]/g, '_');
+        : (bus ? getBusReservationKey(bus) : toFirebaseKey(busId));
       autoCancelledReservations.delete(reservationKey);
       db.ref('radar/reservations/' + reservationKey).remove().catch((error) => {
         console.error('[Firebase] 하차 예약 취소 실패:', error);
@@ -4952,7 +5219,9 @@
     const notifiedReservationKeys = new Set();
     function checkTriggeredReservations() {
       for (const [key, res] of Object.entries(currentReservations)) {
-        if (res && res.status === 'triggered' && !notifiedReservationKeys.has(key)) {
+        if (res && res.status === 'triggered'
+            && !cancellingReservationKeys.has(key)
+            && !notifiedReservationKeys.has(key)) {
           notifiedReservationKeys.add(key);
           const alertSound = normalizeReservationAlertSound(res.alertSound);
           const alertDurationSeconds = normalizeReservationAlertDuration(res.alertDurationSeconds);

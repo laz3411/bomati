@@ -1595,6 +1595,8 @@ end
 -- =========================================================================
 local activeReservations = {}
 local lastReservationPollTime = 0
+local boardingConflictDeletesInFlight = {}
+local boardingConflictIgnoredUntil = {}
 
 local function pollReservationsAsync()
     local now = os.clock()
@@ -1619,6 +1621,14 @@ local function pollReservationsAsync()
             else
                 local data = HttpService:JSONDecode(response.Body)
                 if typeof(data) == "table" then
+                    local pollNow = os.clock()
+                    for reservationKey, ignoredUntil in pairs(boardingConflictIgnoredUntil) do
+                        if ignoredUntil > pollNow then
+                            data[reservationKey] = nil
+                        else
+                            boardingConflictIgnoredUntil[reservationKey] = nil
+                        end
+                    end
                     activeReservations = data
                 end
             end
@@ -2128,21 +2138,44 @@ end
 
 local reservationBindingUpdatesInFlight = {}
 
+local function reservationMatchesVehicleIdentity(reservation, routeName, routeDirection, busLicense)
+    if typeof(reservation) ~= "table" then return false end
+
+    local reservedLicense = reservation.vehicleNumber ~= nil and tostring(reservation.vehicleNumber) or ""
+    local liveLicense = busLicense ~= nil and tostring(busLicense) or ""
+    if reservedLicense ~= "" or liveLicense ~= "" then
+        if reservedLicense == "" or liveLicense == "" or reservedLicense ~= liveLicense then return false end
+        if tostring(reservation.route or "") ~= tostring(routeName or "") then return false end
+        local reservedDirection = normalizeRouteDirection(reservation.direction)
+        return not reservedDirection or not routeDirection or reservedDirection == routeDirection
+    end
+
+    -- 차량번호가 양쪽 모두 없는 이전 예약은 호출부의 버스 경로 ID 비교를 사용합니다.
+    return true
+end
+
 local function findReservationForBus(model, routeName, routeDirection, busLicense)
     local liveBusId = model:GetFullName()
     local liveBusKey = liveBusId:gsub("[%.%#%$/%[%]]", "_")
 
-    if activeReservations[liveBusKey] then
-        return activeReservations[liveBusKey], liveBusKey
+    local directReservation = activeReservations[liveBusKey]
+    if directReservation and reservationMatchesVehicleIdentity(directReservation, routeName, routeDirection, busLicense) then
+        return directReservation, liveBusKey
     end
-    if activeReservations[model.Name] then
-        return activeReservations[model.Name], model.Name
+    local legacyNamedReservation = activeReservations[model.Name]
+    if legacyNamedReservation
+        and legacyNamedReservation.vehicleNumber ~= nil
+        and busLicense ~= nil
+        and reservationMatchesVehicleIdentity(legacyNamedReservation, routeName, routeDirection, busLicense) then
+        return legacyNamedReservation, model.Name
     end
 
     -- Firebase 키는 예전 차량명으로 남아 있어도 payload의 busId가 현재 차량과
     -- 갱신된 예약은 계속 같은 차량의 예약으로 처리합니다.
     for reservationKey, reservation in pairs(activeReservations) do
-        if typeof(reservation) == "table" and tostring(reservation.busId or "") == liveBusId then
+        if typeof(reservation) == "table"
+            and tostring(reservation.busId or "") == liveBusId
+            and reservationMatchesVehicleIdentity(reservation, routeName, routeDirection, busLicense) then
             return reservation, reservationKey
         end
     end
@@ -2169,7 +2202,12 @@ local function findReservationForBus(model, routeName, routeDirection, busLicens
         local reservedDirection = normalizeRouteDirection(reservation.direction)
         local sameDirection = not reservedDirection or not routeDirection or reservedDirection == routeDirection
         local reservedLicense = reservation.vehicleNumber ~= nil and tostring(reservation.vehicleNumber) or nil
-        local sameVehicle = not reservedLicense or not busLicense or reservedLicense == tostring(busLicense)
+        -- 차량 FullName이 바뀐 경우의 재결속은 차량번호가 양쪽에 있고 정확히
+        -- 일치할 때만 허용합니다. 차량번호가 없는 같은 노선의 다른 버스에
+        -- 예약이 잘못 붙는 것을 방지합니다.
+        local sameVehicle = reservedLicense ~= nil
+            and busLicense ~= nil
+            and reservationMatchesVehicleIdentity(reservation, routeName, routeDirection, busLicense)
         if sameRoute and sameDirection and sameVehicle then
             if matchedReservation then
                 warn(string.format(
@@ -2226,6 +2264,80 @@ local function findReservationForBus(model, routeName, routeDirection, busLicens
     end
 
     return matchedReservation, matchedKey
+end
+
+local function reservationBelongsToBoardedBus(reservationKey, reservation, model)
+    if typeof(reservation) ~= "table" or not model then return false end
+
+    local liveBusId = model:GetFullName()
+    local liveBusKey = liveBusId:gsub("[%.%#%$/%[%]]", "_")
+    local reservedLicense = reservation.vehicleNumber ~= nil and tostring(reservation.vehicleNumber) or ""
+    local liveLicenseValue = getBusLicense(model)
+    local liveLicense = liveLicenseValue ~= nil and tostring(liveLicenseValue) or ""
+    local liveRoute = tostring(getValueFromInstance(model, { "route", "Route", "ROUTE", "Line", "line", "노선" }, ""))
+    local liveDirection = getBusRouteDirection(model)
+
+    -- 같은 이름의 버스 Model은 GetFullName도 같을 수 있습니다. 차량번호가
+    -- 하나라도 있으면 경로 ID보다 차량번호·노선·방향 일치를 우선합니다.
+    if reservedLicense ~= "" or liveLicense ~= "" then
+        return reservationMatchesVehicleIdentity(reservation, liveRoute, liveDirection, liveLicenseValue)
+    end
+
+    -- 차량번호가 양쪽 모두 없는 이전 데이터만 경로 ID로 호환합니다.
+    return reservationKey == liveBusKey or tostring(reservation.busId or "") == liveBusId
+end
+
+local function cancelReservationsForDifferentBoardedBus(model)
+    if not model then return 0 end
+
+    local conflicts = {}
+    for reservationKey, reservation in pairs(activeReservations) do
+        local status = typeof(reservation) == "table" and tostring(reservation.status or "pending") or ""
+        local isActive = status == "pending" or status == "triggered"
+        if isActive
+            and not boardingConflictDeletesInFlight[reservationKey]
+            and not reservationBelongsToBoardedBus(reservationKey, reservation, model) then
+            table.insert(conflicts, {
+                key = reservationKey,
+                reservation = reservation
+            })
+        end
+    end
+
+    for _, conflict in ipairs(conflicts) do
+        local reservationKey = conflict.key
+        local reservation = conflict.reservation
+        activeReservations[reservationKey] = nil
+        boardingConflictDeletesInFlight[reservationKey] = true
+        boardingConflictIgnoredUntil[reservationKey] = os.clock() + 5
+        task.spawn(function()
+            local success, err = pcall(function()
+                local response = HttpService:RequestAsync({
+                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. reservationKey .. ".json",
+                    Method = "DELETE"
+                })
+                if not response.Success then
+                    error(string.format("Firebase reservation delete HTTP %s: %s", response.StatusCode, response.StatusMessage))
+                end
+            end)
+            boardingConflictDeletesInFlight[reservationKey] = nil
+            if success then
+                print(string.format(
+                    "[탑승 차량 변경 예약 취소] %s 예약 삭제 -> 탑승 버스 %s",
+                    tostring(reservationKey),
+                    model:GetFullName()
+                ))
+            else
+                boardingConflictIgnoredUntil[reservationKey] = nil
+                if activeReservations[reservationKey] == nil then
+                    activeReservations[reservationKey] = reservation
+                end
+                warn("[탑승 차량 변경 예약 취소 실패]", err)
+            end
+        end)
+    end
+
+    return #conflicts
 end
 
 local function collectBusData()
@@ -2781,6 +2893,10 @@ local function collectBellContext()
     local bellSystem = busBellSystems[model] or getOrCreateBusBellSystem(model)
     local isBellRinging = (bellSystem and bellSystem.isRinging == true) or false
 
+    -- 삭제 요청이 일시 실패하더라도 탑승 중에는 다음 수집 주기에 다시 확인합니다.
+    -- 예약한 차량이 아닌 다른 버스의 예약만 제거됩니다.
+    cancelReservationsForDifferentBoardedBus(model)
+
     if model ~= lastBoardingReportedBus then
         lastBoardingReportedBus = model
         print(string.format("[버스 탑승 확인] 플레이어: %s -> 버스: %s (감지파트: %s, 하차벨: %s, 차종: %s)",
@@ -2804,6 +2920,8 @@ local function collectBellContext()
         busId = model:GetFullName(),
         busName = model.Name,
         route = tostring(getFirstAttribute(model, { "route", "Route", "ROUTE" }, "")),
+        vehicleNumber = getBusLicense(model),
+        direction = getBusRouteDirection(model),
         isHighFloor = isHighFloor,
         isBellRinging = isBellRinging,
         x = round1(position.X),
