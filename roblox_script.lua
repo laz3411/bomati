@@ -25,8 +25,11 @@ if not routeDirectionRemote then
     routeDirectionRemote.Parent = ReplicatedStorage
 end
 
--- 지도에 표시할 실제 Roblox 사용자명(Player.Name)입니다. 표시명(DisplayName)이 아닙니다.
-local TARGET_ROBLOX_USER_NAME = "laz3411"
+-- 지도에 표시할 Roblox 계정입니다. UserId를 우선 사용하고 이름은 구버전 호환에 사용합니다.
+local TARGET_ROBLOX_USER_NAME = "beargobearman"
+local TARGET_ROBLOX_USER_ID = 1463187453
+-- Roblox Studio에 현재 파일이 실제로 반영됐는지 Output/Firebase에서 확인하는 버전입니다.
+local RADAR_SCRIPT_VERSION = "beargobearman-userid-20260914-1"
 
 -- 지도 전송은 초당 2회면 위치 보간에 충분합니다. 물리 벨/예약 조회와 합쳐도
 -- Roblox HttpService 요청 한도를 넘지 않도록 여유를 둡니다.
@@ -46,19 +49,24 @@ local SERVER_SESSION_ID = game.JobId ~= "" and game.JobId or ("studio-" .. tostr
 -- 다른 전역 변수를 보게 됩니다.
 local lastBoardedBus = nil
 
+local function isConfiguredTargetPlayer(player)
+    if not player then return false end
+    if tonumber(TARGET_ROBLOX_USER_ID) and TARGET_ROBLOX_USER_ID > 0
+        and player.UserId == TARGET_ROBLOX_USER_ID then
+        return true
+    end
+    return TARGET_ROBLOX_USER_NAME ~= ""
+        and player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower()
+end
+
 local function isTargetPlayerConnected()
     -- 대상 사용자를 지정하지 않은 개발 환경에서는 기존 전체 전송 동작을 유지합니다.
-    if not TARGET_ROBLOX_USER_NAME or TARGET_ROBLOX_USER_NAME == "" then
+    if (not TARGET_ROBLOX_USER_NAME or TARGET_ROBLOX_USER_NAME == "")
+        and (not TARGET_ROBLOX_USER_ID or TARGET_ROBLOX_USER_ID <= 0) then
         return true
     end
-    -- 1인 시연 서버는 설정값과 실제 Player.Name이 달라도 그 접속자를
-    -- 시연 대상으로 확정합니다. 여러 명인 서버에서는 아래의 지정 사용자만 허용합니다.
-    if #Players:GetPlayers() == 1 then
-        return true
-    end
-    local target = TARGET_ROBLOX_USER_NAME:lower()
     for _, player in ipairs(Players:GetPlayers()) do
-        if player.Name:lower() == target or player.DisplayName:lower() == target then
+        if isConfiguredTargetPlayer(player) then
             return true
         end
     end
@@ -95,7 +103,13 @@ local function clearLiveRadarData(reason)
     end)
 end
 
-print("[로블록스 레이더] Firebase 연동 활성화됨. 대상:", RADAR_ENDPOINT)
+print(string.format(
+    "[로블록스 레이더] 버전=%s / 지정 사용자=%s(%s) / Firebase=%s",
+    RADAR_SCRIPT_VERSION,
+    TARGET_ROBLOX_USER_NAME,
+    tostring(TARGET_ROBLOX_USER_ID),
+    RADAR_ENDPOINT
+))
 
 local FRONT_TAGS = { "BUS_FRONT", "BusFront", "FRONT", "Front" }
 local BACK_TAGS = { "BUS_BACK", "BusBack", "BACK", "Back" }
@@ -523,6 +537,23 @@ local function isBellLightOn(system, light)
     return false
 end
 
+local function isTargetPlayersCurrentBus(busModel)
+    local state = lastBoardedBus
+    if not state or state.model ~= busModel or not busModel or not busModel.Parent then
+        return false
+    end
+    local evidence = state.boardingEvidence
+    local confirmed = evidence == "seat"
+        or evidence == "floor"
+        or evidence == "busin"
+        or evidence == "boarding_part"
+    if not confirmed then
+        return false
+    end
+    -- 탑승 판정 루프가 중단되거나 대상 사용자가 나간 뒤 남은 상태는 사용하지 않습니다.
+    return isTargetPlayerConnected() and (os.clock() - tonumber(state.time or 0)) <= (SEND_INTERVAL * 4)
+end
+
 -- suppressFirebase=true인 경우, 물리 벨에서 이미 Firebase에 기록한 이벤트를
 -- Roblox에서 재생만 하고 다시 Firebase로 되쏘지 않아 무한 반복을 막습니다.
 triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isSpecial, sourceSxnheRoot)
@@ -616,7 +647,9 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isS
         setBellLightState(system, light, true)
     end
 
-    if not suppressFirebase then
+    local shouldSyncTargetBell = not suppressFirebase and isTargetPlayersCurrentBus(busModel)
+    if shouldSyncTargetBell then
+        system.syncedToTargetBridge = true
         -- 4. 피지컬 하차벨 브리지 및 Firebase로 이벤트 전송
         task.spawn(function()
             local success, err = pcall(function()
@@ -670,6 +703,8 @@ triggerBusBell = function(busModel, player, triggerReason, suppressFirebase, isS
                 warn("[로블록스 하차벨] Firebase 이벤트 전송 실패:", err)
             end
         end)
+    elseif not suppressFirebase then
+        print(string.format("[하차벨 연동 제외] 지정 사용자 탑승 차량이 아님: %s", busModel.Name))
     end
 end
 
@@ -761,7 +796,9 @@ resetBusBell = function(busModel, notifyFirebase)
 
     print(string.format("[하차벨 소등 완료] 버스: %s", busModel.Name))
 
-    if notifyFirebase then
+    local shouldNotifyFirebase = notifyFirebase and system.syncedToTargetBridge == true
+    system.syncedToTargetBridge = false
+    if shouldNotifyFirebase then
         task.spawn(function()
             local success, err = pcall(function()
                 local timestamp = DateTime.now().UnixTimestampMillis
@@ -1818,17 +1855,12 @@ local function collectPlayersData()
     local shouldLog = (now - lastLogTime >= 3.0)
 
     for _, player in ipairs(allPlayers) do
-        -- 1인 시연 서버는 접속자를 전송하고, 여러 명인 서버에서는 지정한
-        -- Player.Name/표시명과 일치하는 사용자만 전송합니다.
-        local isTarget = (#allPlayers == 1)
-        if not isTarget and TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
-            local t = TARGET_ROBLOX_USER_NAME:lower()
-            if player.Name:lower() == t or player.DisplayName:lower() == t then
-                isTarget = true
-            end
-        elseif not TARGET_ROBLOX_USER_NAME or TARGET_ROBLOX_USER_NAME == "" then
-            isTarget = true
-        end
+        -- UserId를 우선 사용하므로 표시명 변경이나 대소문자 차이에도 같은 계정을 찾습니다.
+        -- 서버 인원수를 이용한 대체 선택은 하지 않습니다.
+        local hasConfiguredTarget = (TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "")
+            or (TARGET_ROBLOX_USER_ID and TARGET_ROBLOX_USER_ID > 0)
+        local isTarget = not hasConfiguredTarget
+            or isConfiguredTargetPlayer(player)
 
         if isTarget then
             local char = player.Character or workspace:FindFirstChild(player.Name)
@@ -2107,7 +2139,12 @@ local function findReservationForBus(model, routeName, routeDirection, busLicens
     -- 승차 전에 예약한 차량 모델이 탑승 시 복제·개명되면 FullName이 달라질 수
     -- 있습니다. 실제 지정 플레이어가 이 모델에 탑승한 경우에만 같은 노선의
     -- 승차 대기 예약 하나를 현재 차량에 결속합니다.
-    if not lastBoardedBus or lastBoardedBus.model ~= model then
+    local boardingEvidence = lastBoardedBus and lastBoardedBus.boardingEvidence or nil
+    local hasConfirmedBoarding = boardingEvidence == "seat"
+        or boardingEvidence == "floor"
+        or boardingEvidence == "busin"
+        or boardingEvidence == "boarding_part"
+    if not lastBoardedBus or lastBoardedBus.model ~= model or not hasConfirmedBoarding then
         return nil, liveBusKey
     end
 
@@ -2234,7 +2271,10 @@ local function collectBusData()
 
             -- 하차 예약 감지 및 자동 트리거 검사
             local reservation, reservationKey = findReservationForBus(model, routeName, routeDirection, busLicense)
-            if isInService and reservation and (reservation.status == "pending" or reservation.status == nil) then
+            if isInService
+                and reservation
+                and reservation.awaitingBoarding ~= true
+                and (reservation.status == "pending" or reservation.status == nil) then
                 local targetIndex = tonumber(reservation.targetStopIndex)
                 local targetStopId = reservation.targetStopId and tostring(reservation.targetStopId) or nil
                 local targetStop = nil
@@ -2312,7 +2352,9 @@ local function collectBusData()
                 currentStop = currentStop,
                 upcomingStops = upcomingStops,
                 allStops = allStops,
-                isBellRinging = bellSystem.isRinging == true,
+                -- 지도/앱에는 지정 사용자가 실제 탑승한 차량의 벨 상태만 전달합니다.
+                -- 다른 플레이어가 다른 버스에서 누른 벨은 게임 안에서만 동작합니다.
+                isBellRinging = isTargetPlayersCurrentBus(model) and bellSystem.isRinging == true,
                 timestamp = DateTime.now().UnixTimestampMillis
             })
         end
@@ -2364,12 +2406,14 @@ local function findTargetPlayer()
         return nil
     end
 
-    if TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "" then
+    if (TARGET_ROBLOX_USER_NAME and TARGET_ROBLOX_USER_NAME ~= "")
+        or (TARGET_ROBLOX_USER_ID and TARGET_ROBLOX_USER_ID > 0) then
         for _, player in ipairs(allPlayers) do
-            if player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower() then
+            if isConfiguredTargetPlayer(player) then
                 return player
             end
         end
+        return nil
     end
 
     return allPlayers[1]
@@ -2703,6 +2747,7 @@ local function collectBellContext()
             tagged = lastBoardedBus.tagged
             detectedPart = lastBoardedBus.part
             boardingEvidence = "grace"
+            lastBoardedBus.boardingEvidence = "grace"
             isHighFloor = lastBoardedBus.isHighFloor or determineIsHighFloor(model, tagged, detectedPart)
         else
             lastBoardedBus = nil
@@ -2802,8 +2847,21 @@ local function pollPhysicalBellFast()
             lastPhysicalBellEventId = eventId
 
             local player = findTargetPlayer()
-            local model = player and select(1, findBusForPlayer(player)) or nil
-            if not model and lastBoardedBus and lastBoardedBus.model and lastBoardedBus.model.Parent then
+            local model = nil
+            local boardingEvidence = nil
+            if player then
+                local detectedModel, detectedTag, detectedPart, detectedEvidence = findBusForPlayer(player)
+                model = detectedModel
+                boardingEvidence = detectedEvidence
+            end
+            local confirmedBoarding = boardingEvidence == "seat"
+                or boardingEvidence == "floor"
+                or boardingEvidence == "busin"
+                or boardingEvidence == "boarding_part"
+            if not confirmedBoarding then
+                model = nil
+            end
+            if not model and player and lastBoardedBus and isTargetPlayersCurrentBus(lastBoardedBus.model) then
                 model = lastBoardedBus.model
             end
 
@@ -2851,10 +2909,7 @@ task.spawn(function()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-    if TARGET_ROBLOX_USER_NAME ~= "" and (
-        player.Name:lower() == TARGET_ROBLOX_USER_NAME:lower()
-        or player.DisplayName:lower() == TARGET_ROBLOX_USER_NAME:lower()
-    ) then
+    if isConfiguredTargetPlayer(player) then
         clearLiveRadarData("PlayerRemoving: " .. player.Name)
     end
 end)
@@ -2878,12 +2933,17 @@ task.spawn(function()
 
             if not collectSuccess then
                 warn("[로블록스 레이더] 데이터 수집 실패:", playersData)
+            elseif #playersData == 0 then
+                -- 대상 사용자의 캐릭터가 생성/리스폰 중인 짧은 구간에는 빈 사용자와
+                -- 다른 버스·정류장으로 기존 정상 묶음을 덮어쓰지 않습니다.
             else
                 local radarData = {
+                    scriptVersion = RADAR_SCRIPT_VERSION,
                     serverSessionId = SERVER_SESSION_ID,
-                    -- 1인 시연 서버에서는 실제 접속자 이름을 기록해 HTML이
-                    -- 설정 이름 불일치 때문에 위치를 숨기지 않게 합니다.
-                    targetUserName = playersData[1] and playersData[1].name or TARGET_ROBLOX_USER_NAME,
+                    -- 수집된 첫 사용자나 DisplayName으로 소유자가 바뀌지 않도록
+                    -- 서버 설정의 대상 Player.Name을 항상 그대로 기록합니다.
+                    targetUserName = TARGET_ROBLOX_USER_NAME,
+                    targetUserId = TARGET_ROBLOX_USER_ID,
                     players = playersData,
                     buses = busesData,
                     bell = bellData,

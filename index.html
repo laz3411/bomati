@@ -1546,9 +1546,10 @@
       console.error('[Firebase] 초기화 실패:', error);
     }
 
-    // Roblox의 실제 영어 사용자명(Player.Name)을 넣으세요. 표시명(DisplayName)은 사용하지 않습니다.
-    // 이 계정만 지도에 표시됩니다.
-    const TARGET_ROBLOX_USER_NAME = "laz3411";
+    // UserId를 우선 사용하고 Player.Name은 구버전 Roblox 송신 데이터와 호환합니다.
+    // 이 계정이 접속한 서버의 사용자·버스·정류장만 지도에 표시됩니다.
+    const TARGET_ROBLOX_USER_NAME = "beargobearman";
+    const TARGET_ROBLOX_USER_ID = 1463187453;
 
     const CONFIG = {
       minX: -2838, maxX: 1108,
@@ -2070,6 +2071,7 @@
     // 즉시 삭제하므로 이전 위치가 남는 문제와는 분리됩니다.
     const RADAR_LIVE_MAX_AGE_MS = 15_000;
     let isRadarLive = false;
+    let lastRejectedRadarSignature = '';
 
     function isBusBellEngaged(bus) {
       if (!bus) return false;
@@ -2171,6 +2173,9 @@
       if (!rawBus || !Number.isFinite(Number(rawBus.x)) || !Number.isFinite(Number(rawBus.z))) return;
 
       const id = String(rawBus.id || rawBus.name || `${rawBus.x},${rawBus.z}`);
+      const sampleNow = Date.now();
+      const sampleX = Number(rawBus.x);
+      const sampleZ = Number(rawBus.z);
       const nextAngle = normalizeAngle(rawBus.angle || 0);
       const isHigh = isBusHighFloor(rawBus);
       const existing = buses.get(id);
@@ -2196,9 +2201,27 @@
           upcomingStops: rawBus.upcomingStops || [],
           allStops: rawBus.allStops || [],
           isBellRinging: rawBus.isBellRinging === true,
-          lastSeen: Date.now()
+          estimatedSpeed: 0,
+          motionSampleX: sampleX,
+          motionSampleZ: sampleZ,
+          motionSampleAt: sampleNow,
+          lastSeen: sampleNow
         });
         return;
+      }
+
+      const sampleElapsed = (sampleNow - Number(existing.motionSampleAt || sampleNow)) / 1000;
+      if (sampleElapsed >= 0.2) {
+        const travelled = Math.hypot(sampleX - Number(existing.motionSampleX ?? sampleX), sampleZ - Number(existing.motionSampleZ ?? sampleZ));
+        const instantSpeed = travelled / sampleElapsed;
+        if (Number.isFinite(instantSpeed) && instantSpeed >= 0 && instantSpeed <= 500) {
+          existing.estimatedSpeed = Number.isFinite(Number(existing.estimatedSpeed))
+            ? Number(existing.estimatedSpeed) * 0.65 + instantSpeed * 0.35
+            : instantSpeed;
+        }
+        existing.motionSampleX = sampleX;
+        existing.motionSampleZ = sampleZ;
+        existing.motionSampleAt = sampleNow;
       }
 
       existing.name = rawBus.name || existing.name;
@@ -2216,7 +2239,7 @@
       if (Array.isArray(rawBus.upcomingStops)) existing.upcomingStops = rawBus.upcomingStops;
       if (Array.isArray(rawBus.allStops)) existing.allStops = rawBus.allStops;
       existing.isBellRinging = rawBus.isBellRinging === true;
-      existing.lastSeen = Date.now();
+      existing.lastSeen = sampleNow;
 
     }
 
@@ -2707,18 +2730,23 @@
       return Number.isFinite(timestamp) && age >= -60_000 && age <= RADAR_LIVE_MAX_AGE_MS;
     }
 
+      function isConfiguredTargetPayloadPlayer(player) {
+        if (!player || typeof player !== 'object') return false;
+        const receivedId = Number(player.id ?? player.userId ?? player.UserId);
+        if (Number.isFinite(receivedId) && receivedId === Number(TARGET_ROBLOX_USER_ID)) {
+          return true;
+        }
+        return String(player.name || '').trim().toLowerCase() ===
+          String(TARGET_ROBLOX_USER_NAME || '').trim().toLowerCase();
+      }
+
       function belongsToConfiguredTargetServer(value) {
         const expected = String(TARGET_ROBLOX_USER_NAME || '').trim().toLowerCase();
-        if (!expected) return true;
-        const declared = String(value && value.targetUserName || '').trim().toLowerCase();
-        if (declared === expected) return true;
-        // Roblox와 같은 1인 시연 서버 호환: 실제 접속자 이름을 targetUserName으로
-        // 기록한 경우에만 허용합니다. 여러 명인 서버 데이터는 계속 차단됩니다.
-        const players = normalizeList(value && value.players);
-        return players.length === 1 && players.some((player) =>
-          String(player && player.name || '').toLowerCase() === declared ||
-          String(player && player.displayName || '').toLowerCase() === declared
-        );
+        const expectedId = Number(TARGET_ROBLOX_USER_ID);
+        if (!expected && !Number.isFinite(expectedId)) return true;
+        // 루트 소유자 문자열만 믿지 않고 실제 players 배열에서 계정 ID/이름을 확인합니다.
+        // 따라서 구버전 송신 데이터도 받되 다른 1인 서버는 섞이지 않습니다.
+        return normalizeList(value && value.players).some(isConfiguredTargetPayloadPlayer);
       }
 
       function updateTargetPlayer(players) {
@@ -2733,25 +2761,9 @@
           return false;
         }
 
-        // Player.Name과 표시명을 모두 비교합니다. 1인 시연 서버는 Roblox 전송
-        // 스크립트와 동일하게 해당 플레이어를 대상으로 허용합니다.
-        const targetName = String(TARGET_ROBLOX_USER_NAME || '').toLowerCase();
-        let found = list.find(p =>
-          (p.name && String(p.name).toLowerCase() === targetName) ||
-          (p.displayName && String(p.displayName).toLowerCase() === targetName)
-        );
-        if (!found && TARGET_ROBLOX_USER_NAME) {
-          if (list.length === 1) {
-            found = list[0];
-          } else {
-            // 다른 플레이어가 있는 서버의 데이터는 이 사용자 지도에 표시하지 않습니다.
-            targetPlayer = null;
-            return false;
-          }
-        }
-        if (!found) {
-          found = list[0];
-        }
+        // 고유 UserId를 우선 사용하고, ID가 없는 구버전 데이터만 Player.Name으로 찾습니다.
+        // DisplayName이나 서버의 첫 번째 플레이어로 대신 선택하지 않습니다.
+        const found = list.find(isConfiguredTargetPayloadPlayer);
 
         if (found) {
           const x = Number(found.x);
@@ -2792,15 +2804,37 @@
       // 1) 통합 radar 노드 구독 (players, buses, bell)
       db.ref('radar').on('value', (snap) => {
         const val = snap.val();
-        // 새 Roblox 스크립트가 보낸 server 대상 필드가 있을 때만 이를 엄격히 확인합니다.
-        // 기존 형식 데이터는 아래의 실제 지정 플레이어 이름 비교로 호환 처리합니다.
-        const hasServerOwnerField = val && val.targetUserName !== undefined && val.targetUserName !== null;
-        if (!val || !hasFreshRadarTimestamp(val) || (hasServerOwnerField && !belongsToConfiguredTargetServer(val))) {
+        if (!val || !hasFreshRadarTimestamp(val)) {
           isRadarLive = false;
           clearGameMapData();
           setFirebaseStatus('게임 접속 대기 중 · 이전 위치 데이터 숨김', '');
           return;
         }
+
+        // beargobearman 계정이 포함된 최신 서버 묶음만 사용합니다.
+        // 그 묶음의 버스와 정류장만 같은 지도 상태로 함께 반영합니다.
+        if (!belongsToConfiguredTargetServer(val)) {
+          const receivedNames = normalizeList(val.players)
+            .map((player) => String(player && player.name || '').trim())
+            .filter(Boolean);
+          const signature = `${val.serverSessionId || ''}|${receivedNames.join(',')}|${val.scriptVersion || 'old'}`;
+          if (signature !== lastRejectedRadarSignature) {
+            lastRejectedRadarSignature = signature;
+            console.warn(
+              `[Radar] 지정 사용자 불일치: expected=${TARGET_ROBLOX_USER_NAME}(${TARGET_ROBLOX_USER_ID}), ` +
+              `received=${receivedNames.join(',') || '(없음)'}, ` +
+              `scriptVersion=${val.scriptVersion || '(구버전/표식 없음)'}`
+            );
+          }
+          isRadarLive = false;
+          clearGameMapData();
+          setFirebaseStatus(
+            `대상 서버 대기 중 · 현재 ${receivedNames.join(', ') || '다른 사용자'} 수신`,
+            ''
+          );
+          return;
+        }
+        lastRejectedRadarSignature = '';
 
         // Roblox 스크립트가 PUT하는 단일 노드만 사용합니다.
         // 오래된 /players 노드와 동시에 읽으면 낡은 좌표가 새 좌표를
@@ -3540,7 +3574,12 @@
     const BOARDING_STOP_RADIUS = 100;
     const BOARDING_WINDOW_STOPS = 2;
     const PLAYER_ORIGIN_CANCEL_DISTANCE = 180;
+    const BUS_ORIGIN_PASS_CANCEL_DISTANCE = 120;
+    const AUTO_RESTORE_MIN_ETA_SECONDS = 30;
+    const AUTO_RESTORE_FALLBACK_SPEED = 24;
     const cancellingReservationKeys = new Set();
+    const restoringReservationKeys = new Set();
+    const autoCancelledReservations = new Map();
     // 모바일에서는 탭이 연속 전달될 수 있어, 같은 버스의 set 요청이 겹치지 않게 합니다.
     const reservationSaveInFlight = new Set();
     const reservationNotificationModes = new Map();
@@ -3750,16 +3789,21 @@
         return { eligible: false, origin: playerStop.stop, isOnBus: false, reason: '내 정류장을 지나는 버스가 아닙니다.' };
       }
 
-      let stopsUntilBoarding = null;
+      const boardingStopEstimates = [];
       if (bus.currentStop && allRouteStops.length > 0) {
         const currentOrder = allRouteStops.findIndex((stop) => stopMatches(stop, bus.currentStop));
         const playerOrder = allRouteStops.findIndex((stop) => stopMatches(stop, playerRouteStop));
-        if (currentOrder >= 0 && playerOrder >= 0) stopsUntilBoarding = playerOrder - currentOrder;
+        if (currentOrder >= 0 && playerOrder >= 0) boardingStopEstimates.push(playerOrder - currentOrder);
       }
-      if (stopsUntilBoarding === null) {
-        const upcomingOrder = upcomingRouteStops.findIndex((stop) => stopMatches(stop, playerRouteStop));
-        if (upcomingOrder >= 0) stopsUntilBoarding = upcomingOrder + 1;
+      const upcomingOrder = upcomingRouteStops.findIndex((stop) => stopMatches(stop, playerRouteStop));
+      if (upcomingOrder >= 0) {
+        // 서버 upcomingStops의 첫 항목은 바로 다음 정류장이므로 배열 위치 + 1이
+        // 실제 남은 정류장 수입니다. currentStop이 늦게 갱신돼도 이 값을 함께 사용합니다.
+        boardingStopEstimates.push(upcomingOrder + 1);
       }
+      let stopsUntilBoarding = boardingStopEstimates
+        .filter((value) => Number.isFinite(value) && value >= 0)
+        .sort((first, second) => first - second)[0] ?? null;
       if (stopsUntilBoarding === null && allRouteStops.length > 0) {
         let nearestBusOrder = -1;
         let nearestBusDistance = Infinity;
@@ -3905,6 +3949,92 @@
         : null;
     }
 
+    function getReservationOriginStop(reservation) {
+      if (!reservation) return null;
+      const x = Number(reservation.originStopX);
+      const z = Number(reservation.originStopZ);
+      return {
+        stopId: reservation.originStopId ?? null,
+        name: reservation.originStopName || null,
+        x: Number.isFinite(x) ? x : null,
+        z: Number.isFinite(z) ? z : null
+      };
+    }
+
+    function estimateOriginArrivalSeconds(bus, reservation) {
+      if (!bus || !reservation) return null;
+      const origin = getReservationOriginStop(reservation);
+      if (!Number.isFinite(origin.x) || !Number.isFinite(origin.z)) return null;
+      const distance = Math.hypot(Number(bus.curX) - origin.x, Number(bus.curZ) - origin.z);
+      const measuredSpeed = Number(bus.estimatedSpeed);
+      const speed = Number.isFinite(measuredSpeed) && measuredSpeed >= 2
+        ? measuredSpeed
+        : AUTO_RESTORE_FALLBACK_SPEED;
+      const distanceEta = distance / Math.max(speed, 1);
+      const upcoming = Array.isArray(bus.upcomingStops) ? bus.upcomingStops : [];
+      const upcomingIndex = upcoming.findIndex((stop) => stopMatches(stop, origin));
+      const stopEta = upcomingIndex >= 0 ? (upcomingIndex + 1) * 30 : 0;
+      return Math.max(distanceEta, stopEta);
+    }
+
+    function reservationOriginWasPassed(bus, reservation) {
+      if (!bus || !reservation || !Array.isArray(bus.upcomingStops) || bus.upcomingStops.length === 0) return false;
+      const origin = getReservationOriginStop(reservation);
+      if (bus.currentStop && stopMatches(bus.currentStop, origin)) return false;
+      return !bus.upcomingStops.some((stop) => stopMatches(stop, origin));
+    }
+
+    function monitorAutoCancelledReservations() {
+      if (!db || !targetPlayer) return;
+      for (const [key, entry] of autoCancelledReservations) {
+        if (!entry || restoringReservationKeys.has(key) || cancellingReservationKeys.has(key)) continue;
+        if (currentReservations[key]) continue;
+
+        const reservation = entry.reservation;
+        const bus = findBusForReservation(key, reservation);
+        if (!bus) {
+          if (Date.now() - Number(entry.cancelledAt || 0) > 10 * 60 * 1000) autoCancelledReservations.delete(key);
+          continue;
+        }
+        if (reservationOriginWasPassed(bus, reservation)) {
+          autoCancelledReservations.delete(key);
+          continue;
+        }
+
+        const etaSeconds = estimateOriginArrivalSeconds(bus, reservation);
+        if (Number.isFinite(etaSeconds) && etaSeconds <= AUTO_RESTORE_MIN_ETA_SECONDS) {
+          autoCancelledReservations.delete(key);
+          continue;
+        }
+
+        const origin = getReservationOriginStop(reservation);
+        if (!Number.isFinite(origin.x) || !Number.isFinite(origin.z)) {
+          autoCancelledReservations.delete(key);
+          continue;
+        }
+        const playerDistance = Math.hypot(targetPlayer.curX - origin.x, targetPlayer.curZ - origin.z);
+        if (playerDistance > BOARDING_STOP_RADIUS) continue;
+
+        const boarding = getBoardingEligibility(bus);
+        if (!boarding.eligible || boarding.isOnBus || !boarding.origin || !stopMatches(boarding.origin, origin)) continue;
+        if (!Number.isFinite(etaSeconds) || etaSeconds <= AUTO_RESTORE_MIN_ETA_SECONDS) continue;
+
+        restoringReservationKeys.add(key);
+        const restoredReservation = Object.assign({}, reservation, {
+          status: 'pending',
+          awaitingBoarding: true,
+          autoRestoredAt: Date.now(),
+          reservedAt: Date.now()
+        });
+        db.ref(`radar/reservations/${key}`).set(restoredReservation).then(() => {
+          autoCancelledReservations.delete(key);
+          showToast(`🔔 정류장에 돌아와 ${reservation.targetStopName || '하차'} 예약이 자동 복구되었습니다.`);
+        }).catch((error) => {
+          console.error('[Firebase] 자동 취소 예약 복구 실패:', error);
+        }).finally(() => restoringReservationKeys.delete(key));
+      }
+    }
+
     function monitorUnboardedReservations() {
       if (!db || !targetPlayer) return;
       for (const [key, reservation] of Object.entries(currentReservations)) {
@@ -3918,13 +4048,37 @@
         const originZ = Number(reservation.originStopZ);
         if (!Number.isFinite(originX) || !Number.isFinite(originZ)) continue;
         const playerFromOrigin = Math.hypot(targetPlayer.curX - originX, targetPlayer.curZ - originZ);
-        if (playerFromOrigin >= PLAYER_ORIGIN_CANCEL_DISTANCE) {
+        const busFromOrigin = bus
+          ? Math.hypot(Number(bus.curX) - originX, Number(bus.curZ) - originZ)
+          : null;
+        const busMissedBoarding = !!bus
+          && reservationOriginWasPassed(bus, reservation)
+          && Number.isFinite(busFromOrigin)
+          && busFromOrigin >= BUS_ORIGIN_PASS_CANCEL_DISTANCE;
+        const playerLeftOrigin = playerFromOrigin >= PLAYER_ORIGIN_CANCEL_DISTANCE;
+        if (busMissedBoarding || playerLeftOrigin) {
           cancellingReservationKeys.add(key);
+          if (playerLeftOrigin && !busMissedBoarding) {
+            autoCancelledReservations.set(key, {
+              reservation: Object.assign({}, reservation),
+              cancelledAt: Date.now()
+            });
+          } else {
+            // 버스가 승차 정류장을 이미 지나간 예약은 돌아와도 복구하지 않습니다.
+            autoCancelledReservations.delete(key);
+          }
           db.ref(`radar/reservations/${key}`).remove().then(() => {
-            showToast('승차 정류장에서 멀어져 하차 예약이 자동 취소되었습니다.');
-          }).catch(() => {}).finally(() => cancellingReservationKeys.delete(key));
+            delete currentReservations[key];
+            showToast(busMissedBoarding
+              ? '버스가 승차 정류장을 지나갔지만 탑승이 확인되지 않아 하차 예약이 취소되었습니다.'
+              : '승차 정류장에서 멀어져 하차 예약이 자동 취소되었습니다. 30초 전까지 돌아오면 자동 복구됩니다.');
+          }).catch((error) => {
+            autoCancelledReservations.delete(key);
+            console.error('[Firebase] 정류장 이탈 예약 취소 실패:', error);
+          }).finally(() => cancellingReservationKeys.delete(key));
         }
       }
+      monitorAutoCancelledReservations();
       scheduleReservationSheetRender();
     }
     setInterval(monitorUnboardedReservations, 1000);
@@ -4240,6 +4394,7 @@
       }).then(() => {
         // 같은 버스에 이전 예약 알림 이력이 있어도 새 예약의 도착 알림은 다시 받아야 합니다.
         notifiedReservationKeys.delete(busKey);
+        autoCancelledReservations.delete(busKey);
         showToast(`🔔 ${selectedStopName} 하차 예약이 완료되었습니다!`);
         renderReservationSheet();
       }).catch((error) => {
@@ -4302,6 +4457,8 @@
         bus.isBellRinging = true;
         immediateBellPendingUntil.set(bus.id, Date.now() + 8_000);
         delete currentReservations[reservationKey];
+        autoCancelledReservations.delete(reservationKey);
+        autoCancelledReservations.delete(busKey);
         showToast('🔔 하차벨을 즉시 작동했습니다.');
         renderReservationSheet();
       }).catch((error) => {
@@ -4320,6 +4477,7 @@
       const reservationKey = reservationEntry
         ? reservationEntry.key
         : busId.replace(/[.#$/[\]]/g, '_');
+      autoCancelledReservations.delete(reservationKey);
       db.ref('radar/reservations/' + reservationKey).remove().catch((error) => {
         console.error('[Firebase] 하차 예약 취소 실패:', error);
         showToast('하차 예약 취소에 실패했습니다. Firebase 규칙을 확인하세요.');
