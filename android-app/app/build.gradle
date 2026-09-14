@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+// OneDrive 작업 폴더에서 생성물 삭제가 잠기는 경우, 환경 변수로 빌드
+// 출력만 로컬 경로에 둘 수 있게 합니다. 소스와 APK 내용에는 영향이 없습니다.
+def requestedBuildDir = System.getenv('BUMATI_ANDROID_BUILD_DIR')
+if (requestedBuildDir) {
+    layout.buildDirectory.set(file(requestedBuildDir))
+}
+
+android {
+    namespace 'com.bumati.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.bumati.app'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+def generatedWebAssets = layout.buildDirectory.dir('generated/assets')
+
+tasks.register('syncWebAssets', Copy) {
+    from(rootProject.projectDir.parentFile) {
+        include 'index.html'
+        include 'manifest.json'
+        include 'sw.js'
+        include '부마티 로고.png'
+        include 'icons/**'
+        include 'image/**'
+    }
+    into(generatedWebAssets)
+}
+
+android.sourceSets.main.assets.srcDir(generatedWebAssets)
+tasks.named('preBuild').configure { dependsOn tasks.named('syncWebAssets') }
+
+dependencies {
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

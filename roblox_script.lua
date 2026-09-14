@@ -35,8 +35,9 @@ local RADAR_SCRIPT_VERSION = "beargobearman-userid-20260914-1"
 -- Roblox HttpService 요청 한도를 넘지 않도록 여유를 둡니다.
 local SEND_INTERVAL = 0.50
 
--- 하차 예약 정류장 도착 시 하차벨 자동 울림 거리 (studs)
-local ARRIVAL_TRIGGER_DISTANCE = 65
+-- 하차 예약 정류장에 도착하기 전 하차벨을 울릴 거리 (studs)
+-- 버스가 감속·정차하기 전에 충분히 안내되도록 기존 65에서 늘렸습니다.
+local ARRIVAL_TRIGGER_DISTANCE = 170
 
 local isSending = false
 local radarClearedForAbsentTarget = false

@@ -1,11 +1,14 @@
 {
-  "name": "Roblox Live Map Radar",
-  "short_name": "RobloxRadar",
-  "description": "로블록스 플레이어 실시간 위치 레이더 지도",
-  "start_url": "/",
+  "name": "BUMATI 하차 예약",
+  "short_name": "BUMATI",
+  "description": "실시간 버스 위치 확인과 하차 예약·알림 서비스",
+  "id": "./index.html",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#121316",
-  "theme_color": "#1e2025",
+  "orientation": "portrait",
+  "background_color": "#f4f9fc",
+  "theme_color": "#0284c7",
   "icons": [
     {
       "src": "icons/icon-192.png",

@@ -1,9 +1,10 @@
-const CACHE_NAME = 'roblox-radar-v5';
+const CACHE_NAME = 'bumati-radar-v6';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/image/realmap.png',
   '/manifest.json',
+  '/부마티 로고.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png'
 ];

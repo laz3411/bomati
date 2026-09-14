@@ -3,7 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Bomati GPS Radar</title>
+  <meta name="theme-color" content="#0284c7">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.json">
+  <title>Bumati GPS Radar</title>
   <style>
     * {
       box-sizing: border-box;
@@ -79,7 +84,8 @@
       max-height: 132px;
       margin: 0 auto 28px;
       object-fit: contain;
-      border-radius: 14px;
+      border-radius: 24px;
+      clip-path: inset(0 round 24px);
       filter: drop-shadow(0 12px 24px rgba(0, 0, 0, .34));
     }
 
@@ -1345,9 +1351,9 @@
     <canvas id="mapCanvas"></canvas>
     <section id="appLoadingOverlay" class="app-loading-overlay" aria-live="polite" aria-busy="true">
       <div class="app-loading-card">
-        <img class="app-loading-logo" src="https://raw.githubusercontent.com/laz3411/bomati/fix/%EB%B6%80%EB%A7%88%ED%8B%B0%20%EB%A1%9C%EA%B3%A0.png" alt="부마티 로고">
+        <img class="app-loading-logo" src="부마티 로고.png" alt="부마티 로고">
         <div class="app-loading-spinner" aria-hidden="true"></div>
-        <p id="appLoadingEyebrow" class="app-loading-eyebrow">BOMATI</p>
+        <p id="appLoadingEyebrow" class="app-loading-eyebrow">BUMATI</p>
         <h1 id="appLoadingTitle" class="app-loading-title">앱을 준비하고 있어요</h1>
         <p id="appLoadingCopy" class="app-loading-copy">실시간 운행 정보를 확인하는 중입니다.
 잠시만 기다려 주세요.</p>
@@ -1393,7 +1399,7 @@
     <div id="bellAlertBanner" class="bell-alert-banner" role="alert" aria-live="assertive"></div>
     <div id="swipeBellAlert" class="swipe-bell-alert" role="alert" aria-live="assertive" aria-hidden="true">
       <div id="swipeBellAlertCard" class="swipe-bell-alert-card" aria-label="좌우로 밀어 하차 알림 해제">
-        <div class="swipe-bell-alert-meta"><span>BOMATI 하차 알림</span><span>방금</span></div>
+        <div class="swipe-bell-alert-meta"><span>BUMATI 하차 알림</span><span>방금</span></div>
         <div class="swipe-bell-alert-content">
           <span class="swipe-bell-alert-icon" aria-hidden="true">🔔</span>
           <div>
@@ -1484,7 +1490,7 @@
     <!-- Firebase Authentication 로그인 -->
     <div id="demoLogin" class="demo-login hidden" role="dialog" aria-modal="true" aria-label="로그인">
       <div class="demo-login-card">
-        <div class="demo-login-eyebrow">BOMATI ACCOUNT</div>
+        <div class="demo-login-eyebrow">BUMATI ACCOUNT</div>
         <h1 id="authTitle" class="demo-login-title">로그인</h1>
         <p id="authCopy" class="demo-login-copy">Firebase 계정으로 안전하게 로그인합니다.</p>
         <div class="auth-tabs" role="tablist" aria-label="계정 방식 선택">
@@ -1511,18 +1517,18 @@
           <div id="authError" class="login-error" role="alert"></div>
           <button id="authSubmitBtn" class="login-submit" type="submit">로그인</button>
         </form>
-        <p class="demo-login-note">비밀번호는 BOMATI 데이터베이스에 저장하지 않으며 Firebase Authentication에서 관리합니다.</p>
+        <p class="demo-login-note">비밀번호는 BUMATI 데이터베이스에 저장하지 않으며 Firebase Authentication에서 관리합니다.</p>
       </div>
     </div>
 
     <div id="termsModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="termsTitle">
       <div class="modal-card">
-        <h2 id="termsTitle">BOMATI 이용약관</h2>
+        <h2 id="termsTitle">BUMATI 이용약관</h2>
         <div class="terms-meta">시행일 2026년 9월 13일 · 버전 1.0</div>
         <div class="terms-content">
-          <section><h3>1. 서비스 목적</h3><p>BOMATI는 버스 위치 확인, 하차 예약 및 하차 알림을 제공하는 시뮬레이션 기반 서비스입니다. 실제 교통 상황과 차이가 발생할 수 있습니다.</p></section>
+          <section><h3>1. 서비스 목적</h3><p>BUMATI는 버스 위치 확인, 하차 예약 및 하차 알림을 제공하는 시뮬레이션 기반 서비스입니다. 실제 교통 상황과 차이가 발생할 수 있습니다.</p></section>
           <section><h3>2. 계정 이용</h3><p>회원은 본인의 이메일로 계정을 생성하며 계정과 비밀번호를 안전하게 관리해야 합니다. 타인의 계정을 무단으로 이용해서는 안 됩니다.</p></section>
-          <section><h3>3. 위치 및 이용정보</h3><p>서비스 제공을 위해 게임 내 위치, 선택한 버스·정류장, 하차 예약 상태를 처리할 수 있습니다. 비밀번호는 Firebase Authentication에서 관리하며 BOMATI Realtime Database에 저장하지 않습니다.</p></section>
+          <section><h3>3. 위치 및 이용정보</h3><p>서비스 제공을 위해 게임 내 위치, 선택한 버스·정류장, 하차 예약 상태를 처리할 수 있습니다. 비밀번호는 Firebase Authentication에서 관리하며 BUMATI Realtime Database에 저장하지 않습니다.</p></section>
           <section><h3>4. 서비스 제한</h3><p>네트워크, Firebase 또는 Roblox 상태에 따라 위치와 알림이 지연될 수 있습니다. 안전과 실제 하차 판단을 앱 알림에만 의존해서는 안 됩니다.</p></section>
           <section><h3>5. 회원 탈퇴</h3><p>회원은 계정 메뉴에서 탈퇴할 수 있습니다. 탈퇴 시 Firebase 인증 계정과 계정 프로필이 삭제되며 복구할 수 없습니다.</p></section>
         </div>
@@ -1691,7 +1697,7 @@
       appLoadingOverlay.classList.remove('is-hidden');
       appLoadingOverlay.classList.toggle('is-maintenance', state === 'maintenance');
       appLoadingOverlay.setAttribute('aria-busy', 'true');
-      if (appLoadingEyebrow) appLoadingEyebrow.textContent = state === 'maintenance' ? 'SERVICE NOTICE' : 'BOMATI';
+      if (appLoadingEyebrow) appLoadingEyebrow.textContent = state === 'maintenance' ? 'SERVICE NOTICE' : 'BUMATI';
       if (appLoadingTitle) appLoadingTitle.textContent = title;
       if (appLoadingCopy) appLoadingCopy.textContent = copy;
     }
@@ -1808,7 +1814,7 @@
       }
       document.getElementById('authTitle').textContent = isSignup ? '회원가입' : '로그인';
       document.getElementById('authCopy').textContent = isSignup
-        ? '이용약관에 동의하고 BOMATI 계정을 만듭니다.'
+        ? '이용약관에 동의하고 BUMATI 계정을 만듭니다.'
         : 'Firebase 계정으로 안전하게 로그인합니다.';
       if (authSubmitBtn) authSubmitBtn.textContent = isSignup ? '동의하고 회원가입' : '로그인';
       const displayNameInput = document.getElementById('authDisplayName');
@@ -2253,7 +2259,7 @@
     let latestBoardingInfo = null;
     const floorOverrides = new Map();
     try {
-      const saved = JSON.parse(localStorage.getItem('bomati_floor_overrides') || '{}');
+      const saved = JSON.parse(localStorage.getItem('bumati_floor_overrides') || '{}');
       for (const [k, v] of Object.entries(saved)) {
         floorOverrides.set(k, v === true);
       }
@@ -2265,7 +2271,7 @@
       try {
         const obj = {};
         for (const [k, v] of floorOverrides) obj[k] = v;
-        localStorage.setItem('bomati_floor_overrides', JSON.stringify(obj));
+        localStorage.setItem('bumati_floor_overrides', JSON.stringify(obj));
       } catch (e) {}
     }
 
@@ -3839,8 +3845,9 @@
     let reservationSheetPointerActive = false;
     let reservationSheetRenderQueued = false;
     let reservationSheetRenderPending = false;
-    // Roblox 자동 하차벨 반경과 같게 유지합니다.
-    const RESERVATION_MIN_DISTANCE = 65;
+    // Roblox 자동 하차벨 반경과 같게 유지합니다. 이 거리 안에서는 새 예약이
+    // 즉시 울리는 일을 막기 위해 예약을 받지 않습니다.
+    const RESERVATION_MIN_DISTANCE = 170;
     const BOARDING_STOP_RADIUS = 100;
     const BOARDING_WINDOW_STOPS = 2;
     const PLAYER_ORIGIN_CANCEL_DISTANCE = 180;
@@ -4021,6 +4028,7 @@
         notifiedReservationKeys.delete(key);
       });
       scheduleReservationSheetRender();
+      syncNativeReservationWatch();
 
       db.ref().update(updates).then(() => {
         entries.forEach(([key]) => reservationsConfirmedWhileBoarded.delete(key));
@@ -4033,6 +4041,7 @@
         entries.forEach(([key, reservation]) => {
           if (!currentReservations[key]) currentReservations[key] = reservation;
         });
+        syncNativeReservationWatch();
         showToast('하차 예약 자동 취소에 실패했습니다. 연결을 확인해 주세요.');
       }).finally(() => {
         entries.forEach(([key]) => cancellingReservationKeys.delete(key));
@@ -4061,6 +4070,7 @@
         notifiedReservationKeys.delete(key);
       });
       scheduleReservationSheetRender();
+      syncNativeReservationWatch();
 
       db.ref().update(updates).then(() => {
         showToast(conflicts.length === 1
@@ -4072,6 +4082,7 @@
         conflicts.forEach(({ key, reservation }) => {
           if (!currentReservations[key]) currentReservations[key] = reservation;
         });
+        syncNativeReservationWatch();
         showToast('이전 버스의 하차 예약 취소에 실패했습니다. 연결을 확인해 주세요.');
       }).finally(() => {
         conflicts.forEach(({ key }) => cancellingReservationKeys.delete(key));
@@ -4559,11 +4570,13 @@
           }
           db.ref(`radar/reservations/${key}`).remove().then(() => {
             delete currentReservations[key];
+            syncNativeReservationWatch();
             showToast(busMissedBoarding
               ? '버스가 승차 정류장을 지나갔지만 탑승이 확인되지 않아 하차 예약이 취소되었습니다.'
               : '승차 정류장에서 멀어져 하차 예약이 자동 취소되었습니다. 30초 전까지 돌아오면 자동 복구됩니다.');
           }).catch((error) => {
             autoCancelledReservations.delete(key);
+            syncNativeReservationWatch();
             console.error('[Firebase] 정류장 이탈 예약 취소 실패:', error);
           }).finally(() => cancellingReservationKeys.delete(key));
         }
@@ -4586,6 +4599,7 @@
           cancelReservationsAfterGettingOff();
         }
         cancelReservationsForDifferentBoardedBus();
+        syncNativeReservationWatch();
         scheduleReservationSheetRender();
         checkTriggeredReservations();
       }, (error) => {
@@ -4957,6 +4971,7 @@
           notifiedReservationKeys.delete(key);
         });
         currentReservations[busKey] = reservationData;
+        syncNativeReservationWatch();
         // 같은 버스에 이전 예약 알림 이력이 있어도 새 예약의 도착 알림은 다시 받아야 합니다.
         notifiedReservationKeys.delete(busKey);
         autoCancelledReservations.delete(busKey);
@@ -5023,6 +5038,7 @@
         bus.isBellRinging = true;
         immediateBellPendingUntil.set(bus.id, Date.now() + 8_000);
         delete currentReservations[reservationKey];
+        syncNativeReservationWatch();
         autoCancelledReservations.delete(reservationKey);
         autoCancelledReservations.delete(busKey);
         showToast('🔔 하차벨을 즉시 작동했습니다.');
@@ -5044,7 +5060,10 @@
         ? reservationEntry.key
         : (bus ? getBusReservationKey(bus) : toFirebaseKey(busId));
       autoCancelledReservations.delete(reservationKey);
-      db.ref('radar/reservations/' + reservationKey).remove().catch((error) => {
+      db.ref('radar/reservations/' + reservationKey).remove().then(() => {
+        delete currentReservations[reservationKey];
+        syncNativeReservationWatch();
+      }).catch((error) => {
         console.error('[Firebase] 하차 예약 취소 실패:', error);
         showToast('하차 예약 취소에 실패했습니다. Firebase 규칙을 확인하세요.');
       });
@@ -5053,6 +5072,14 @@
     }
 
     function requestMobileNotificationPermission() {
+      if (window.BumatiAndroid && typeof window.BumatiAndroid.requestNotificationPermission === 'function') {
+        try {
+          // 네이티브 앱은 최초 한 번만 시스템 권한을 요청하고 이후에는 Android에
+          // 저장된 권한 상태를 그대로 사용합니다.
+          window.BumatiAndroid.requestNotificationPermission();
+        } catch (_) {}
+        return;
+      }
       if (!('Notification' in window) || Notification.permission !== 'default') return;
       // 예약 버튼 탭이라는 사용자 제스처 안에서만 권한 요청이 가능합니다.
       // 일부 APK WebView/구형 브라우저는 requestPermission이 없거나 Promise를
@@ -5120,12 +5147,24 @@
     function notifyMobileBell(stopName, sound, durationSeconds) {
       const message = `하차벨이 울렸습니다. ${stopName || '예약 정류장'}에서 하차하세요.`;
       const vibration = buildReservationVibration(sound, durationSeconds);
+      if (window.BumatiAndroid && typeof window.BumatiAndroid.showStopNotification === 'function') {
+        try {
+          window.BumatiAndroid.showStopNotification(
+            '🔔 BUMATI 하차 알림',
+            message,
+            normalizeReservationAlertSound(sound),
+            normalizeReservationAlertDuration(durationSeconds),
+            document.visibilityState !== 'visible'
+          );
+          return;
+        } catch (_) {}
+      }
       if (navigator.vibrate) navigator.vibrate(vibration);
       if ('Notification' in window && Notification.permission === 'granted') {
         try {
-          new Notification('🔔 BOMATI 하차 알림', {
+          new Notification('🔔 BUMATI 하차 알림', {
             body: message,
-            tag: 'bomati-stop-alert',
+            tag: 'bumati-stop-alert',
             renotify: true,
             requireInteraction: true,
             // 화면이 보일 때는 선택한 인앱 음만 재생하고, 백그라운드에서는
@@ -5137,6 +5176,29 @@
           // APK WebView처럼 브라우저 알림 API가 없는 환경은 화면 배너/진동으로 계속 안내합니다.
         }
       }
+    }
+
+    function syncNativeReservationWatch() {
+      const bridge = window.BumatiAndroid;
+      if (!bridge || typeof bridge.startReservationWatch !== 'function') return;
+      const pendingEntry = Object.entries(currentReservations).find(([key, reservation]) => (
+        reservation
+        && !cancellingReservationKeys.has(key)
+        && String(reservation.status || 'pending').toLowerCase() === 'pending'
+      ));
+      try {
+        if (!pendingEntry) {
+          if (typeof bridge.stopReservationWatch === 'function') bridge.stopReservationWatch();
+          return;
+        }
+        const [key, reservation] = pendingEntry;
+        bridge.startReservationWatch(
+          key,
+          String(reservation.targetStopName || reservation.targetStopId || '예약 정류장'),
+          normalizeReservationAlertSound(reservation.alertSound),
+          normalizeReservationAlertDuration(reservation.alertDurationSeconds)
+        );
+      } catch (_) {}
     }
 
     function playReservationAlertTone(audioContext, frequency, offset, length, volume, type = 'sine') {
