@@ -79,6 +79,7 @@
       max-height: 132px;
       margin: 0 auto 28px;
       object-fit: contain;
+      border-radius: 14px;
       filter: drop-shadow(0 12px 24px rgba(0, 0, 0, .34));
     }
 
@@ -102,16 +103,24 @@
     }
 
     .app-loading-title {
-      font-size: 21px;
+      max-width: 290px;
+      margin: 0 auto;
+      font-size: clamp(19px, 5.6vw, 23px);
       font-weight: 800;
       letter-spacing: -.03em;
+      line-height: 1.3;
+      text-wrap: balance;
     }
 
     .app-loading-copy {
-      margin: 10px auto 0;
+      max-width: 286px;
+      margin: 12px auto 0;
       color: #b7c8da;
-      font-size: 13px;
-      line-height: 1.55;
+      font-size: clamp(12px, 3.6vw, 14px);
+      line-height: 1.65;
+      white-space: pre-line;
+      word-break: keep-all;
+      text-wrap: balance;
     }
 
     .app-loading-overlay.is-maintenance .app-loading-spinner {
@@ -1340,7 +1349,8 @@
         <div class="app-loading-spinner" aria-hidden="true"></div>
         <p id="appLoadingEyebrow" class="app-loading-eyebrow">BOMATI</p>
         <h1 id="appLoadingTitle" class="app-loading-title">앱을 준비하고 있어요</h1>
-        <p id="appLoadingCopy" class="app-loading-copy">실시간 운행 정보를 확인하는 중입니다.</p>
+        <p id="appLoadingCopy" class="app-loading-copy">실시간 운행 정보를 확인하는 중입니다.
+잠시만 기다려 주세요.</p>
       </div>
     </section>
     <button id="demoAccountBtn" class="demo-account-btn" type="button" style="display:none;"></button>
@@ -1687,12 +1697,12 @@
     }
 
     function showMaintenanceScreen(copy) {
-      showAppLoading('maintenance', '현재 점검 중입니다', copy || '테스터가 Roblox 체험에 접속하면 실시간 지도를 바로 불러옵니다.');
+      showAppLoading('maintenance', '현재 점검 중입니다', copy || '테스터가 Roblox 체험에 접속하면\n실시간 지도를 바로 불러옵니다.');
     }
 
     function revealLiveMap() {
       if (!appLoadingOverlay || appLoadingState === 'ready') return;
-      showAppLoading('loading', '운행 정보를 불러오는 중', '최신 위치와 운행 정보를 지도에 반영하고 있습니다.');
+      showAppLoading('loading', '운행 정보를 불러오는 중', '최신 위치와 운행 정보를\n지도에 반영하고 있습니다.');
       appLoadingTimer = setTimeout(() => {
         if (!isRadarLive) return;
         appLoadingOverlay.classList.add('is-hidden');
@@ -2807,7 +2817,7 @@
         } else {
           setFirebaseStatus('Firebase 재연결 중...', '');
           // 연결이 끊긴 동안에는 마지막 지도를 노출하지 않고 대기 화면을 유지합니다.
-          showMaintenanceScreen('실시간 서버에 다시 연결하고 있습니다. 잠시만 기다려 주세요.');
+          showMaintenanceScreen('실시간 서버에 다시 연결하고 있습니다.\n잠시만 기다려 주세요.');
         }
       });
 
@@ -3000,7 +3010,7 @@
             `대상 서버 대기 중 · 현재 ${receivedNames.join(', ') || '다른 사용자'} 수신`,
             ''
           );
-          showMaintenanceScreen('지정된 운전자의 Roblox 게임 접속을 기다리고 있습니다.');
+          showMaintenanceScreen('지정된 운전자의 Roblox 게임 접속을\n기다리고 있습니다.');
           return;
         }
         lastRejectedRadarSignature = '';
@@ -3018,6 +3028,7 @@
         isRadarLive = true;
 
         // 하차벨 및 고상 모드 동기화
+        const wasBoardedBeforeRadarUpdate = Boolean(boardedBusId);
         if (val.bell) {
           latestBellInfo = val.bell;
           latestBoardingInfo = val.bell;
@@ -3049,6 +3060,12 @@
           }));
         const visibleBuses = dedupeBusPayloads(rawBuses);
         replaceBuses(visibleBuses);
+        if (boardedBusId) {
+          rememberReservationsOnCurrentBus();
+        } else if (wasBoardedBeforeRadarUpdate) {
+          // Roblox가 active:false를 보낸 실제 하차 전환에서만 기록된 예약을 지웁니다.
+          cancelReservationsAfterGettingOff();
+        }
         // 예약한 버스가 아닌 다른 차량에 실제 탑승한 순간에는 이전 차량의
         // 예약을 즉시 취소합니다. 정류장 이탈 판정을 기다리지 않습니다.
         cancelReservationsForDifferentBoardedBus();
@@ -3075,7 +3092,7 @@
       }, (error) => {
         console.error('[Firebase] /radar 읽기 실패:', error);
         setFirebaseStatus('Firebase 읽기 실패 · 규칙/URL 확인 필요', 'error');
-        showMaintenanceScreen('실시간 운행 정보를 확인할 수 없습니다. 잠시 후 다시 연결합니다.');
+        showMaintenanceScreen('실시간 운행 정보를 확인할 수 없습니다.\n잠시 후 다시 연결합니다.');
         showToast('Firebase 읽기 실패: 데이터베이스 규칙과 URL을 확인하세요.');
       });
 
@@ -3833,6 +3850,9 @@
     const cancellingReservationKeys = new Set();
     const restoringReservationKeys = new Set();
     const autoCancelledReservations = new Map();
+    // 실제 탑승이 확인된 버스의 예약만 기록합니다. 승차 전 대기 예약은
+    // 하차 상태가 되어도 건드리지 않아, "미리 내림" 상황에서만 자동 취소됩니다.
+    const reservationsConfirmedWhileBoarded = new Map();
     // 모바일에서는 탭이 연속 전달될 수 있어, 같은 버스의 set 요청이 겹치지 않게 합니다.
     const reservationSaveInFlight = new Set();
     let reservationReplacementInFlight = false;
@@ -3967,6 +3987,56 @@
       const reservedBusId = String(reservation && reservation.busId || '');
       return boardingIds.includes(reservedBusId)
         || boardingIds.some((id) => String(key) === toFirebaseKey(id));
+    }
+
+    function rememberReservationsOnCurrentBus() {
+      if (!boardedBusId) return;
+      const boardedBus = [...buses.values()].find((bus) => isBoardedBus(bus)) || null;
+      for (const [key, reservation] of Object.entries(currentReservations)) {
+        if (isActiveReservation(reservation)
+            && reservationTargetsCurrentBoardedBus(key, reservation, boardedBus)) {
+          reservationsConfirmedWhileBoarded.set(key, Object.assign({}, reservation));
+        }
+      }
+    }
+
+    function cancelReservationsAfterGettingOff() {
+      if (!db || boardedBusId || reservationsConfirmedWhileBoarded.size === 0) return;
+      const entries = [...reservationsConfirmedWhileBoarded.entries()]
+        .filter(([key, savedReservation]) => {
+          const reservation = currentReservations[key] || savedReservation;
+          return isActiveReservation(reservation) && !cancellingReservationKeys.has(key);
+        });
+      if (entries.length === 0) {
+        reservationsConfirmedWhileBoarded.clear();
+        return;
+      }
+
+      const updates = {};
+      entries.forEach(([key]) => {
+        cancellingReservationKeys.add(key);
+        updates[`radar/reservations/${key}`] = null;
+        delete currentReservations[key];
+        autoCancelledReservations.delete(key);
+        notifiedReservationKeys.delete(key);
+      });
+      scheduleReservationSheetRender();
+
+      db.ref().update(updates).then(() => {
+        entries.forEach(([key]) => reservationsConfirmedWhileBoarded.delete(key));
+        showToast(entries.length === 1
+          ? '버스에서 내려 하차 예약을 자동 취소했습니다.'
+          : `버스에서 내려 하차 예약 ${entries.length}건을 자동 취소했습니다.`);
+      }).catch((error) => {
+        console.error('[Firebase] 하차 후 예약 자동 취소 실패:', error);
+        // 다음 실시간 수신에서 다시 시도할 수 있도록 기존 예약을 복원합니다.
+        entries.forEach(([key, reservation]) => {
+          if (!currentReservations[key]) currentReservations[key] = reservation;
+        });
+        showToast('하차 예약 자동 취소에 실패했습니다. 연결을 확인해 주세요.');
+      }).finally(() => {
+        entries.forEach(([key]) => cancellingReservationKeys.delete(key));
+      });
     }
 
     function cancelReservationsForDifferentBoardedBus() {
@@ -4510,6 +4580,11 @@
         // 삭제 요청 처리 중인 예약이 오래된 실시간 스냅샷으로 잠깐 되살아나
         // 벨/알림을 작동시키지 않게 로컬 화면에서도 계속 제외합니다.
         cancellingReservationKeys.forEach((key) => delete currentReservations[key]);
+        if (boardedBusId) {
+          rememberReservationsOnCurrentBus();
+        } else {
+          cancelReservationsAfterGettingOff();
+        }
         cancelReservationsForDifferentBoardedBus();
         scheduleReservationSheetRender();
         checkTriggeredReservations();
