@@ -36,7 +36,6 @@ local RADAR_SCRIPT_VERSION = "beargobearman-userid-20260914-1"
 local SEND_INTERVAL = 0.50
 
 -- 하차 예약 정류장에 도착하기 전 하차벨을 울릴 거리 (studs)
--- 버스가 감속·정차하기 전에 충분히 안내되도록 기존 65에서 늘렸습니다.
 local ARRIVAL_TRIGGER_DISTANCE = 170
 
 local isSending = false
