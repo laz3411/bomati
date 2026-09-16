@@ -1449,7 +1449,7 @@
         <section id="notificationModeSection" class="reservation-notification-mode" aria-labelledby="notificationModeTitle">
           <div class="notification-mode-heading">
             <span id="notificationModeTitle" class="notification-mode-title">하차 예약 알림 방식</span>
-            <span class="notification-mode-caption">예약 전에 선택</span>
+            <span class="notification-mode-caption">예약 후에도 변경 가능</span>
           </div>
           <div class="notification-mode-options" role="group" aria-label="하차 예약 알림 방식">
             <button id="notificationBannerBtn" class="notification-mode-option" type="button" aria-pressed="false">
@@ -1464,9 +1464,9 @@
           <div class="notification-sound-settings">
             <label class="notification-sound-field">알림음
               <select id="reservationSoundSelect" class="notification-sound-select">
-                <option value="classic">기본 하차 차임</option>
-                <option value="gentle">부드러운 차임</option>
-                <option value="urgent">강한 반복 알림</option>
+                <option value="classic">BUMATI 전용 알림음 (기본)</option>
+                <option value="gentle">BUMATI 부드러운 알림음</option>
+                <option value="urgent">BUMATI 긴급 알림음</option>
               </select>
             </label>
             <label class="notification-sound-field">알림 재생 시간
@@ -3876,6 +3876,25 @@
       URGENT: 'urgent'
     });
     const reservationAlertPreferences = new Map();
+    const RESERVATION_ALERT_STORAGE_KEY = 'bumati_reservation_alert_preference';
+    const RESERVATION_MODE_STORAGE_KEY = 'bumati_reservation_notification_mode';
+    let defaultReservationAlertPreference = { sound: RESERVATION_ALERT_SOUNDS.CLASSIC, durationSeconds: 15 };
+    let defaultReservationNotificationMode = RESERVATION_NOTIFICATION_MODES.SWIPE;
+    try {
+      const savedAlertPreference = JSON.parse(localStorage.getItem(RESERVATION_ALERT_STORAGE_KEY) || '{}');
+      defaultReservationAlertPreference = {
+        sound: Object.values(RESERVATION_ALERT_SOUNDS).includes(savedAlertPreference.sound)
+          ? savedAlertPreference.sound
+          : RESERVATION_ALERT_SOUNDS.CLASSIC,
+        durationSeconds: [5, 15, 30].includes(Number(savedAlertPreference.durationSeconds))
+          ? Number(savedAlertPreference.durationSeconds)
+          : 15
+      };
+      defaultReservationNotificationMode = normalizeReservationNotificationMode(
+        localStorage.getItem(RESERVATION_MODE_STORAGE_KEY),
+        RESERVATION_NOTIFICATION_MODES.SWIPE
+      );
+    } catch (_) {}
     // 버스별로 마지막 확인된 정류장 순번을 유지해 노선별 upcomingStops가 잠깐
     // 비어도 탑승 중 이미 지난 정류장이 예약 목록에 다시 나타나지 않게 합니다.
     const boardedReservationProgress = new Map();
@@ -3906,7 +3925,11 @@
     function isActiveReservation(reservation) {
       if (!reservation) return false;
       const status = String(reservation.status || 'pending').toLowerCase();
-      return status === 'pending' || status === 'triggered';
+      return status === 'pending';
+    }
+
+    function isTrackedReservation(reservation) {
+      return isActiveReservation(reservation) || reservation?.status === 'triggered';
     }
 
     function reservationTargetsBus(key, reservation, bus) {
@@ -4000,7 +4023,7 @@
       if (!boardedBusId) return;
       const boardedBus = [...buses.values()].find((bus) => isBoardedBus(bus)) || null;
       for (const [key, reservation] of Object.entries(currentReservations)) {
-        if (isActiveReservation(reservation)
+        if (isTrackedReservation(reservation)
             && reservationTargetsCurrentBoardedBus(key, reservation, boardedBus)) {
           reservationsConfirmedWhileBoarded.set(key, Object.assign({}, reservation));
         }
@@ -4012,7 +4035,7 @@
       const entries = [...reservationsConfirmedWhileBoarded.entries()]
         .filter(([key, savedReservation]) => {
           const reservation = currentReservations[key] || savedReservation;
-          return isActiveReservation(reservation) && !cancellingReservationKeys.has(key);
+          return isTrackedReservation(reservation) && !cancellingReservationKeys.has(key);
         });
       if (entries.length === 0) {
         reservationsConfirmedWhileBoarded.clear();
@@ -4053,7 +4076,7 @@
       const boardedBus = [...buses.values()].find((bus) => isBoardedBus(bus)) || null;
       const conflicts = Object.entries(currentReservations)
         .filter(([key, reservation]) => (
-          isActiveReservation(reservation)
+          isTrackedReservation(reservation)
           && !cancellingReservationKeys.has(key)
           && !reservationTargetsCurrentBoardedBus(key, reservation, boardedBus)
         ))
@@ -4128,18 +4151,39 @@
     }
 
     function getReservationNotificationMode(busId) {
-      return normalizeReservationNotificationMode(reservationNotificationModes.get(busId));
+      return normalizeReservationNotificationMode(
+        reservationNotificationModes.get(String(busId || '')),
+        defaultReservationNotificationMode
+      );
     }
 
     function setReservationNotificationMode(busId, mode) {
-      if (!busId) return;
-      const reservationEntry = findReservationEntryForBus(buses.get(busId));
-      if (reservationEntry && reservationEntry.reservation) {
-        showToast('이미 저장된 하차 예약의 알림 방식은 변경할 수 없습니다. 예약을 취소한 뒤 다시 선택하세요.');
-        return;
-      }
-      reservationNotificationModes.set(busId, normalizeReservationNotificationMode(mode));
+      if (!busId) return false;
+      const targetBus = buses.get(busId)
+        || [...buses.values()].find((bus) => String(bus.id) === String(busId));
+      const reservationEntry = findReservationEntryForBus(targetBus);
+      const normalizedMode = normalizeReservationNotificationMode(mode);
+      reservationNotificationModes.set(String(busId), normalizedMode);
+      defaultReservationNotificationMode = normalizedMode;
+      try { localStorage.setItem(RESERVATION_MODE_STORAGE_KEY, normalizedMode); } catch (_) {}
+      updatePendingReservationAlert(reservationEntry, { notificationMode: normalizedMode });
       renderReservationSheet();
+      showToast('하차 예약 알림 방식을 저장했습니다.');
+      return true;
+    }
+
+    function updatePendingReservationAlert(entry, patch) {
+      if (!entry || !isActiveReservation(entry.reservation) || !db) return;
+      const reservedAt = entry.reservation.reservedAt;
+      Object.assign(entry.reservation, patch);
+      // 도착/교체와 설정 변경이 겹쳐도 완료된 예약을 되살리지 않습니다.
+      db.ref(`radar/reservations/${entry.key}`).transaction((current) => {
+        if (!current || current.status !== 'pending' || current.reservedAt !== reservedAt) return;
+        return Object.assign({}, current, patch);
+      }).then(() => syncNativeReservationWatch()).catch((error) => {
+        console.error('예약 알림 설정 저장 실패:', error);
+        showToast('현재 예약에 설정을 저장하지 못했습니다. 연결 후 다시 변경해 주세요.');
+      });
     }
 
     function normalizeReservationAlertSound(value) {
@@ -4154,7 +4198,7 @@
     }
 
     function getReservationAlertPreference(busId) {
-      const saved = reservationAlertPreferences.get(String(busId || '')) || {};
+      const saved = reservationAlertPreferences.get(String(busId || '')) || defaultReservationAlertPreference;
       return {
         sound: normalizeReservationAlertSound(saved.sound),
         durationSeconds: normalizeReservationAlertDuration(saved.durationSeconds)
@@ -4162,26 +4206,40 @@
     }
 
     function setReservationAlertPreference(busId, patch) {
-      if (!busId) return;
-      const bus = buses.get(busId);
+      if (!busId) return false;
+      const bus = buses.get(busId)
+        || [...buses.values()].find((candidate) => String(candidate.id) === String(busId));
       const reservationEntry = findReservationEntryForBus(bus);
-      if (reservationEntry && reservationEntry.reservation) {
-        showToast('예약 알림 설정은 예약을 취소한 뒤 변경할 수 있습니다.');
-        renderReservationSheet();
-        return;
-      }
-      const current = getReservationAlertPreference(busId);
+      const current = isActiveReservation(reservationEntry?.reservation)
+        ? { sound: reservationEntry.reservation.alertSound, durationSeconds: reservationEntry.reservation.alertDurationSeconds }
+        : getReservationAlertPreference(busId);
       reservationAlertPreferences.set(String(busId), {
         sound: normalizeReservationAlertSound(patch.sound ?? current.sound),
         durationSeconds: normalizeReservationAlertDuration(patch.durationSeconds ?? current.durationSeconds)
       });
+      defaultReservationAlertPreference = reservationAlertPreferences.get(String(busId));
+      updatePendingReservationAlert(reservationEntry, {
+        alertSound: defaultReservationAlertPreference.sound,
+        alertDurationSeconds: defaultReservationAlertPreference.durationSeconds
+      });
+      try {
+        localStorage.setItem(RESERVATION_ALERT_STORAGE_KEY, JSON.stringify(defaultReservationAlertPreference));
+      } catch (_) {}
+      renderReservationSheet();
+      return true;
     }
 
     document.getElementById('reservationSoundSelect')?.addEventListener('change', (event) => {
-      setReservationAlertPreference(selectedBusId, { sound: event.target.value });
+      const selectedBus = buses.get(selectedBusId);
+      if (setReservationAlertPreference(selectedBus?.id || selectedBusId, { sound: event.target.value })) {
+        showToast('알림음을 저장했습니다. 현재 대기 중인 예약에도 적용됩니다.');
+      }
     });
     document.getElementById('reservationDurationSelect')?.addEventListener('change', (event) => {
-      setReservationAlertPreference(selectedBusId, { durationSeconds: event.target.value });
+      const selectedBus = buses.get(selectedBusId);
+      if (setReservationAlertPreference(selectedBus?.id || selectedBusId, { durationSeconds: event.target.value })) {
+        showToast('알림 재생 시간을 저장했습니다.');
+      }
     });
 
     function stopMatches(first, second) {
@@ -4717,7 +4775,10 @@
       }
 
       const reservationEntry = findReservationEntryForBus(bus);
-      const currentRes = reservationEntry && reservationEntry.reservation;
+      // 이미 알림이 울린 triggered 기록은 완료된 예약입니다. 같은 버스를 다시
+      // 탔을 때 설정과 새 예약을 막지 않도록 pending 예약만 현재 예약으로 봅니다.
+      const matchedReservation = reservationEntry && reservationEntry.reservation;
+      const currentRes = isActiveReservation(matchedReservation) ? matchedReservation : null;
       const boarding = getBoardingEligibility(bus);
       const bellEngaged = isBusBellEngaged(bus);
       const reservationExists = !!currentRes;
@@ -4747,7 +4808,7 @@
           const active = selectedNotificationMode === mode;
           button.classList.toggle('active', active);
           button.setAttribute('aria-pressed', String(active));
-          button.disabled = reservationExists;
+          button.disabled = false;
         };
         updateNotificationModeButton(notificationBannerBtn, RESERVATION_NOTIFICATION_MODES.BANNER);
         updateNotificationModeButton(notificationSwipeBtn, RESERVATION_NOTIFICATION_MODES.SWIPE);
@@ -4763,11 +4824,11 @@
       }
       if (reservationSoundSelect) {
         reservationSoundSelect.value = selectedAlertPreference.sound;
-        reservationSoundSelect.disabled = reservationExists;
+        reservationSoundSelect.disabled = false;
       }
       if (reservationDurationSelect) {
         reservationDurationSelect.value = String(selectedAlertPreference.durationSeconds);
-        reservationDurationSelect.disabled = reservationExists;
+        reservationDurationSelect.disabled = false;
       }
 
       if (!stopListEl) return;
@@ -5116,7 +5177,12 @@
       } catch (_) {}
     }
 
+    let activeNativeAlertToken = null;
     function stopReservationAlertFeedback() {
+      if (activeNativeAlertToken) {
+        try { window.BumatiAndroid?.dismissReservationAlert?.(activeNativeAlertToken); } catch (_) {}
+        activeNativeAlertToken = null;
+      }
       clearInterval(reservationAlertRepeatTimer);
       clearTimeout(reservationAlertStopTimer);
       reservationAlertRepeatTimer = null;
@@ -5148,16 +5214,9 @@
       const message = `하차벨이 울렸습니다. ${stopName || '예약 정류장'}에서 하차하세요.`;
       const vibration = buildReservationVibration(sound, durationSeconds);
       if (window.BumatiAndroid && typeof window.BumatiAndroid.showStopNotification === 'function') {
-        try {
-          window.BumatiAndroid.showStopNotification(
-            '🔔 BUMATI 하차 알림',
-            message,
-            normalizeReservationAlertSound(sound),
-            normalizeReservationAlertDuration(durationSeconds),
-            document.visibilityState !== 'visible'
-          );
-          return;
-        } catch (_) {}
+        // Android 서비스가 예약 도착을 한 번만 처리하고 설정 시간 동안 재생합니다.
+        syncNativeReservationWatch();
+        return;
       }
       if (navigator.vibrate) navigator.vibrate(vibration);
       if ('Notification' in window && Notification.permission === 'granted') {
@@ -5181,10 +5240,12 @@
     function syncNativeReservationWatch() {
       const bridge = window.BumatiAndroid;
       if (!bridge || typeof bridge.startReservationWatch !== 'function') return;
-      const pendingEntry = Object.entries(currentReservations).find(([key, reservation]) => (
+      const pendingEntry = Object.entries(currentReservations).sort((a, b) =>
+        Number(b[1]?.reservedAt || 0) - Number(a[1]?.reservedAt || 0)
+      ).find(([key, reservation]) => (
         reservation
         && !cancellingReservationKeys.has(key)
-        && String(reservation.status || 'pending').toLowerCase() === 'pending'
+        && ['pending', 'triggered'].includes(String(reservation.status || 'pending').toLowerCase())
       ));
       try {
         if (!pendingEntry) {
@@ -5259,6 +5320,7 @@
       clearTimeout(bellAlertTimer);
       bellAlertTimer = setTimeout(() => {
         banner.classList.remove('show');
+        stopReservationAlertFeedback();
       }, normalizeReservationAlertDuration(durationSeconds) * 1000);
     }
 
@@ -5354,15 +5416,32 @@
     installSwipeBellAlertGesture();
 
     const notifiedReservationKeys = new Set();
+    // 알림창에서 해제한 결과도 앱으로 반영합니다. 백그라운드에서는 네이티브가 처리합니다.
+    setInterval(() => {
+      if (!activeNativeAlertToken) return;
+      try {
+        if (window.BumatiAndroid?.isAlertDismissed?.(activeNativeAlertToken)) {
+          activeNativeAlertToken = null;
+          clearTimeout(bellAlertTimer);
+          document.getElementById('bellAlertBanner')?.classList.remove('show');
+          hideSwipeBellAlert();
+        }
+      } catch (_) {}
+    }, 500);
+
     function checkTriggeredReservations() {
       for (const [key, res] of Object.entries(currentReservations)) {
+        const alertToken = `${key}@${res?.reservedAt ?? '0'}`;
         if (res && res.status === 'triggered'
             && !cancellingReservationKeys.has(key)
-            && !notifiedReservationKeys.has(key)) {
-          notifiedReservationKeys.add(key);
+            && !notifiedReservationKeys.has(alertToken)) {
+          notifiedReservationKeys.add(alertToken);
+          try { if (window.BumatiAndroid?.isAlertDismissed?.(alertToken)) continue; } catch (_) {}
+          if (window.BumatiAndroid) activeNativeAlertToken = alertToken;
           const alertSound = normalizeReservationAlertSound(res.alertSound);
           const alertDurationSeconds = normalizeReservationAlertDuration(res.alertDurationSeconds);
-          playWebBellChime(alertSound, alertDurationSeconds);
+          // APK에서는 미디어 볼륨 대신 Android 알림 채널이 소리와 진동을 담당합니다.
+          if (!window.BumatiAndroid) playWebBellChime(alertSound, alertDurationSeconds);
           notifyMobileBell(res.targetStopName || '예약 정류장', alertSound, alertDurationSeconds);
           if (res.notificationMode === RESERVATION_NOTIFICATION_MODES.SWIPE) {
             showSwipeBellAlert(res.targetStopName || '예약 정류장');

@@ -81,4 +81,14 @@ public final class BumatiJavascriptBridge {
     public void stopReservationWatch() {
         BumatiReservationService.stop(activity);
     }
+
+    @JavascriptInterface
+    public void dismissReservationAlert(String token) {
+        activity.runOnUiThread(() -> BumatiNotifications.dismiss(activity, token));
+    }
+
+    @JavascriptInterface
+    public boolean isAlertDismissed(String token) {
+        return activity.getSharedPreferences("bumati_alerts", 0).getBoolean("dismissed:" + token, false);
+    }
 }

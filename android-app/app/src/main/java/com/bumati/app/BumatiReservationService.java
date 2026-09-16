@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class BumatiReservationService extends Service {
     static final String ACTION_START = "com.bumati.app.action.START_RESERVATION_WATCH";
     static final String ACTION_STOP = "com.bumati.app.action.STOP_RESERVATION_WATCH";
+    static final String ACTION_CANCEL = "com.bumati.app.action.CANCEL_RESERVATION";
     private static final String EXTRA_KEY = "reservation_key";
     private static final String EXTRA_STOP = "stop_name";
     private static final String EXTRA_SOUND = "alert_sound";
@@ -34,9 +35,12 @@ public class BumatiReservationService extends Service {
             "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app/radar/reservations/";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ExecutorService cancelWorker = Executors.newSingleThreadExecutor();
     private final AtomicInteger generation = new AtomicInteger();
     private Future<?> worker;
     private String activeReservationKey = "";
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private String currentStamp = "";
 
     static void start(Context context, String key, String stopName, String sound, int durationSeconds) {
         if (key == null || key.trim().isEmpty()) return;
@@ -63,11 +67,22 @@ public class BumatiReservationService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            BumatiNotifications.dismiss(this, null);
             clearSavedReservation();
             stopWatching();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
             return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_CANCEL.equals(intent.getAction())) {
+            String cancelKey = intent.getStringExtra("key");
+            String cancelStamp = intent.getStringExtra("stamp");
+            if (cancelKey != null && cancelStamp != null) {
+                cancelWorker.submit(() -> cancelReservation(cancelKey, cancelStamp));
+            }
+            if (!activeReservationKey.isEmpty()) return START_STICKY;
+            // 알림 버튼으로 프로세스가 다시 시작된 경우에도 저장된 감시를 복원합니다.
+            intent = null;
         }
 
         String key = intent == null ? null : intent.getStringExtra(EXTRA_KEY);
@@ -86,6 +101,7 @@ public class BumatiReservationService extends Service {
             return START_NOT_STICKY;
         }
 
+        if (!key.equals(activeReservationKey)) currentStamp = "";
         stopName = stopName == null || stopName.trim().isEmpty() ? "예약 정류장" : stopName;
         sound = sound == null || sound.trim().isEmpty() ? "classic" : sound;
         duration = Math.max(5, Math.min(duration, 60));
@@ -97,7 +113,7 @@ public class BumatiReservationService extends Service {
         ServiceCompat.startForeground(
                 this,
                 BumatiNotifications.WATCH_NOTIFICATION_ID,
-                BumatiNotifications.buildWatchNotification(this, stopName).build(),
+                BumatiNotifications.buildWatchNotification(this, stopName, key, currentStamp).build(),
                 foregroundType
         );
 
@@ -152,14 +168,32 @@ public class BumatiReservationService extends Service {
                     }
                     JSONObject reservation = new JSONObject(body);
                     String status = reservation.optString("status", "pending");
+                    if (hasDisembarked(key, reservation)) {
+                        cancelReservation(key, reservation.optString("reservedAt", "0"));
+                        Thread.sleep(1000);
+                        continue;
+                    }
                     if ("triggered".equalsIgnoreCase(status)) {
                         String targetName = reservation.optString("targetStopName", stopName);
                         String targetSound = reservation.optString("alertSound", sound);
                         int targetDuration = reservation.optInt("alertDurationSeconds", duration);
-                        finishWatch(expectedGeneration, true, targetName, targetSound, targetDuration);
-                        return;
+                        String stamp = reservation.optString("reservedAt", "0");
+                        main.post(() -> {
+                            if (generation.get() != expectedGeneration) return;
+                            currentStamp = stamp;
+                            BumatiNotifications.postReservationAlert(this, key + "@" + stamp, targetName, targetSound, targetDuration);
+                        });
                     }
-                    if (!"pending".equalsIgnoreCase(status)) {
+                    String stamp = reservation.optString("reservedAt", "0");
+                    main.post(() -> {
+                        if (generation.get() != expectedGeneration) return;
+                        currentStamp = stamp;
+                        androidx.core.app.NotificationManagerCompat.from(this).notify(
+                            BumatiNotifications.WATCH_NOTIFICATION_ID,
+                            BumatiNotifications.buildWatchNotification(this,
+                                reservation.optString("targetStopName", stopName), key, stamp).build());
+                    });
+                    if (!"pending".equalsIgnoreCase(status) && !"triggered".equalsIgnoreCase(status)) {
                         finishWatch(expectedGeneration, false, stopName, sound, duration);
                         return;
                     }
@@ -189,19 +223,13 @@ public class BumatiReservationService extends Service {
             int duration
     ) {
         if (generation.get() != expectedGeneration) return;
-        clearSavedReservation();
-        if (triggered) {
-            BumatiNotifications.postStopAlert(
-                    this,
-                    "🔔 BUMATI 하차 알림",
-                    "하차벨이 울렸습니다. " + stopName + "에서 하차하세요.",
-                    sound,
-                    duration,
-                    true
-            );
-        }
-        stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
+        main.post(() -> {
+            if (generation.get() != expectedGeneration) return;
+            clearSavedReservation();
+            BumatiNotifications.dismiss(this, null);
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            stopSelf();
+        });
     }
 
     private void saveReservation(String key, String stopName, String sound, int duration) {
@@ -211,6 +239,91 @@ public class BumatiReservationService extends Service {
                 .putString(EXTRA_SOUND, sound)
                 .putInt(EXTRA_DURATION, duration)
                 .apply();
+    }
+
+    private boolean hasDisembarked(String key, JSONObject reservation) {
+        // 위치가 아닌 서버의 실제 탑승 판정만 사용하며 통신 실패/오래된 값으로 취소하지 않습니다.
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new java.net.URL(
+                    "https://bumati-default-rtdb.asia-southeast1.firebasedatabase.app/radar/bell.json").openConnection();
+            connection.setConnectTimeout(3000);
+            connection.setReadTimeout(3000);
+            connection.setUseCaches(false);
+            if (connection.getResponseCode() != 200) return false;
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) body.append(line);
+            }
+            JSONObject bell = new JSONObject(body.toString());
+            long age = System.currentTimeMillis() - bell.optLong("timestamp", 0);
+            if (age < -5000 || age > 10000) return false;
+            String token = key + "@" + reservation.optString("reservedAt", "0");
+            boolean active = bell.optBoolean("active", false);
+            String vehicle = reservation.optString("vehicleNumber", "");
+            String boardedVehicle = bell.optString("vehicleNumber", "");
+            boolean sameBus = !vehicle.isEmpty() || !boardedVehicle.isEmpty()
+                    ? !vehicle.isEmpty() && vehicle.equals(boardedVehicle)
+                        && reservation.optString("route").equals(bell.optString("route"))
+                    : reservation.optString("busId").equals(bell.optString("busId"));
+            if (active && sameBus) {
+                getSharedPreferences(PREFS, 0).edit().putString("boarded_token", token).apply();
+                return false;
+            }
+            return token.equals(getSharedPreferences(PREFS, 0).getString("boarded_token", ""))
+                    && (bell.has("active") && !active || bell.optBoolean("canImmediateExit", false) && !sameBus);
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private void cancelReservation(String key, String stamp) {
+        HttpURLConnection connection = null;
+        try {
+            String url = FIREBASE_RESERVATIONS_URL + android.net.Uri.encode(key) + ".json";
+            connection = (HttpURLConnection) new java.net.URL(url).openConnection();
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+            connection.setRequestProperty("X-Firebase-ETag", "true");
+            if (connection.getResponseCode() != 200) throw new Exception("예약 조회 실패");
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) body.append(line);
+            }
+            String etag = connection.getHeaderField("ETag");
+            if (!"null".equals(body.toString().trim())) {
+                JSONObject reservation = new JSONObject(body.toString());
+                if (!stamp.equals(reservation.optString("reservedAt", "0"))) throw new Exception("예약이 변경되었습니다. 앱에서 확인하세요.");
+                if (etag == null) throw new Exception("예약 버전 확인 실패");
+                connection.disconnect();
+                connection = (HttpURLConnection) new java.net.URL(url).openConnection();
+                connection.setConnectTimeout(5000);
+                connection.setReadTimeout(5000);
+                connection.setRequestMethod("PUT");
+                connection.setRequestProperty("if-match", etag);
+                connection.setRequestProperty("Content-Type", "application/json");
+                connection.setDoOutput(true);
+                try (java.io.OutputStream stream = connection.getOutputStream()) { stream.write("null".getBytes(StandardCharsets.UTF_8)); }
+                int code = connection.getResponseCode();
+                if (code < 200 || code >= 300) throw new Exception("예약 취소 실패. 다시 시도해 주세요.");
+            }
+            main.post(() -> {
+                if (key.equals(activeReservationKey) && stamp.equals(currentStamp)) {
+                    BumatiNotifications.dismiss(this, key + "@" + stamp);
+                    clearSavedReservation();
+                    stopWatching();
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+                }
+            });
+        } catch (Exception error) {
+            android.util.Log.w("BUMATI", "알림에서 예약 취소 실패", error);
+            main.post(() -> android.widget.Toast.makeText(this, error.getMessage(), android.widget.Toast.LENGTH_LONG).show());
+        } finally { if (connection != null) connection.disconnect(); }
     }
 
     private void clearSavedReservation() {
@@ -234,8 +347,11 @@ public class BumatiReservationService extends Service {
 
     @Override
     public void onDestroy() {
+        main.removeCallbacksAndMessages(null);
+        BumatiNotifications.stopAlertPlayback();
         stopWatching();
         executor.shutdownNow();
+        cancelWorker.shutdownNow();
         super.onDestroy();
     }
 
