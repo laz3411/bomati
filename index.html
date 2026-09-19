@@ -309,6 +309,10 @@
     }
     .badge-low { background: #16a34a; }
     .badge-high { background: #ea580c; }
+    .badge-idle { background: #64748b; }
+    .bus-floor-badge.is-idle { cursor: default; }
+    .bus-floor-badge.is-idle:hover,
+    .bus-floor-badge.is-idle:active { transform: none; filter: none; }
 
     .bell-status-badge {
       font-size: 11px;
@@ -705,6 +709,7 @@
     .bus-explorer-route { min-width: 43px; padding: 6px 7px; border-radius: 9px; color: #fff; text-align: center; font-size: 13px; font-weight: 900; background: #0284c7; }
     .bus-explorer-route.high { background: #ea580c; }
     .bus-explorer-route.low { background: #16a34a; }
+    .bus-explorer-route.idle { background: #64748b; }
     .bus-explorer-name { overflow: hidden; color: #f1f5f9; font-size: 13px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
     .bus-explorer-meta { margin-top: 3px; color: #94a3b8; font-size: 11px; }
     .bus-explorer-distance { color: #bae6fd; font-size: 12px; font-weight: 800; white-space: nowrap; }
@@ -2326,6 +2331,16 @@
       return null;
     }
 
+    // 운행 시작 버튼을 누른 버스만 true입니다. 값이 없거나 잘못된 값이면
+    // 예약 가능한 운행 차량으로 오인하지 않도록 미운행으로 처리합니다.
+    function isBusInService(rawBus) {
+      if (!rawBus) return false;
+      const value = rawBus.inService;
+      if (value === true || value === 1) return true;
+      if (typeof value !== 'string') return false;
+      return ['true', '1', 'running', 'inservice', 'in_service', '운행'].includes(value.toLowerCase().trim());
+    }
+
     function isBusHighFloor(rawBus) {
       if (!rawBus) return false;
       const id = String(rawBus.id || rawBus.name || '');
@@ -2386,7 +2401,7 @@
           route: rawBus.route || '',
           vehicleNumber: rawBus.vehicleNumber ?? rawBus.VehicleNumber ?? rawBus.busLicense ?? rawBus.BusLicense ?? null,
           direction: rawBus.direction || rawBus.routeDirection || '',
-          inService: rawBus.inService !== false,
+          inService: isBusInService(rawBus),
           isHighFloor: isHigh,
           curX: Number(rawBus.x),
           curZ: Number(rawBus.z),
@@ -2425,7 +2440,7 @@
       existing.route = rawBus.route || existing.route;
       existing.vehicleNumber = rawBus.vehicleNumber ?? rawBus.VehicleNumber ?? rawBus.busLicense ?? rawBus.BusLicense ?? existing.vehicleNumber;
       existing.direction = rawBus.direction || rawBus.routeDirection || existing.direction;
-      existing.inService = rawBus.inService !== false;
+      existing.inService = isBusInService(rawBus);
       existing.isHighFloor = isHigh;
       existing.targetX = Number(rawBus.x);
       existing.targetZ = Number(rawBus.z);
@@ -2719,7 +2734,9 @@
       const width = 10;
       const height = 24;
       const routeText = String(bus.route || bus.name || 'BUS').slice(0, 8);
-      const fill = bus.isHighFloor ? '#f97316' : '#16a34a';
+      const fill = isBusInService(bus)
+        ? (bus.isHighFloor ? '#f97316' : '#16a34a')
+        : '#64748b';
       const isSelected = bus.id === selectedBusId;
 
       ctx.save();
@@ -3276,7 +3293,7 @@
       let minDistance = 250; // 약 250 studs 이내 버스 접근 감지
 
       for (const bus of buses.values()) {
-        if (bus.inService === false || !getBoardingEligibility(bus).eligible) continue;
+        if (!isBusInService(bus) || !getBoardingEligibility(bus).eligible) continue;
         const d = Math.hypot(targetPlayer.curX - bus.curX, targetPlayer.curZ - bus.curZ);
         if (d < minDistance) {
           minDistance = d;
@@ -3396,7 +3413,7 @@
 
     function isBusInSelectedRoute(bus) {
       if (!selectedRouteFilter) return true;
-      return bus.inService !== false
+      return isBusInService(bus)
         && getBusRouteKey(bus) === selectedRouteFilter
         && (!selectedDirectionFilter || getBusDirectionKey(bus) === selectedDirectionFilter);
     }
@@ -3454,7 +3471,7 @@
       const routeKey = String(route || '').trim();
       const directionKey = getBusDirectionKey({ direction });
       const routeBuses = [...buses.values()].filter((bus) => (
-        bus.inService !== false
+        isBusInService(bus)
           && getBoardingEligibility(bus).eligible
           && getBusRouteKey(bus) === routeKey
           && (!directionKey || getBusDirectionKey(bus) === directionKey)
@@ -3492,7 +3509,7 @@
     }
 
     function getBusesServingStop(stop) {
-      const allBuses = [...buses.values()].filter((bus) => bus.inService !== false);
+      const allBuses = [...buses.values()].filter(isBusInService);
       const hasRouteData = allBuses.some((bus) => (
         (Array.isArray(bus.upcomingStops) && bus.upcomingStops.length > 0)
         || (Array.isArray(bus.allStops) && bus.allStops.length > 0)
@@ -3515,7 +3532,7 @@
 
     function getNearbyBuses() {
       const point = targetPlayer ? { x: targetPlayer.curX, z: targetPlayer.curZ } : null;
-      return [...buses.values()].filter((bus) => bus.inService !== false).map((bus) => Object.assign({}, bus, {
+      return [...buses.values()].filter(isBusInService).map((bus) => Object.assign({}, bus, {
         _stopDistance: getBusDistanceFrom(point, bus),
         _routeKnown: true
       })).filter((bus) => {
@@ -3645,7 +3662,8 @@
           item.type = 'button';
           item.className = 'bus-explorer-item';
           const route = document.createElement('span');
-          route.className = `bus-explorer-route ${bus.isHighFloor ? 'high' : 'low'}`;
+          const inService = isBusInService(bus);
+          route.className = `bus-explorer-route ${inService ? (bus.isHighFloor ? 'high' : 'low') : 'idle'}`;
           route.textContent = getBusRouteKey(bus).slice(0, 8);
           const detail = document.createElement('span');
           const name = document.createElement('span');
@@ -3653,7 +3671,9 @@
           name.textContent = formatBusLicense(bus);
           const meta = document.createElement('span');
           meta.className = 'bus-explorer-meta';
-          meta.textContent = `${getBusDirectionLabel(bus)} · ${bus.isHighFloor ? '고상' : '저상'} · 하차 예약 가능`;
+          meta.textContent = inService
+            ? `${getBusDirectionLabel(bus)} · ${bus.isHighFloor ? '고상' : '저상'} · 하차 예약 가능`
+            : `${getBusDirectionLabel(bus)} · 미운행`;
           detail.append(name, meta);
           const distance = document.createElement('span');
           distance.className = 'bus-explorer-distance';
@@ -3671,8 +3691,9 @@
         item.type = 'button';
         item.className = 'bus-explorer-item';
         const route = document.createElement('span');
-        const hasLowFloor = group.buses.some((bus) => !bus.isHighFloor);
-        route.className = `bus-explorer-route ${hasLowFloor ? 'low' : 'high'}`;
+        const runningBuses = group.buses.filter(isBusInService);
+        const hasLowFloor = runningBuses.some((bus) => !bus.isHighFloor);
+        route.className = `bus-explorer-route ${runningBuses.length === 0 ? 'idle' : (hasLowFloor ? 'low' : 'high')}`;
         route.textContent = group.route.slice(0, 8);
         const detail = document.createElement('span');
         const name = document.createElement('span');
@@ -4399,7 +4420,7 @@
 
     function getBoardingEligibility(bus) {
       if (!bus) return { eligible: false, origin: null, isOnBus: false, reason: '버스 정보를 불러오는 중입니다.' };
-      if (bus.inService === false) {
+      if (!isBusInService(bus)) {
         return { eligible: false, origin: null, isOnBus: false, reason: '운전자가 아직 상행/하행 운행을 시작하지 않았습니다.' };
       }
       if (boardedBusId && !isBoardedBus(bus)) {
@@ -4832,11 +4853,14 @@
         routeBadge.textContent = `${routeName} ${getBusDirectionLabel(bus)} · ${license}`;
       }
       if (floorBadge) {
-        floorBadge.textContent = bus.isHighFloor ? '고상' : '저상';
-        floorBadge.className = 'bus-floor-badge ' + (bus.isHighFloor ? 'badge-high' : 'badge-low');
-        floorBadge.style.cursor = 'pointer';
-        floorBadge.title = '클릭하여 고상 / 저상 차종 직접 변경';
-        floorBadge.onclick = (e) => {
+        const inService = isBusInService(bus);
+        floorBadge.textContent = inService ? (bus.isHighFloor ? '고상' : '저상') : '미운행';
+        floorBadge.className = 'bus-floor-badge ' + (inService ? (bus.isHighFloor ? 'badge-high' : 'badge-low') : 'badge-idle is-idle');
+        floorBadge.style.cursor = inService ? 'pointer' : 'default';
+        floorBadge.title = inService
+          ? '클릭하여 고상 / 저상 차종 직접 변경'
+          : '운전자가 상행 또는 하행 운행을 시작하면 차종이 표시됩니다.';
+        floorBadge.onclick = inService ? (e) => {
           e.stopPropagation();
           bus.isHighFloor = !bus.isHighFloor;
           saveFloorOverride(bus.id, bus.isHighFloor);
@@ -4848,13 +4872,15 @@
             const busKey = bus.id.replace(/[.#$/[\]]/g, '_');
             db.ref(`radar/floorOverrides/${busKey}`).set(bus.isHighFloor ? 'high' : 'low').catch(() => {});
           }
-        };
+        } : null;
       }
       if (bellBadge) {
         bellBadge.style.display = bus.isBellRinging ? 'inline-block' : 'none';
       }
       if (currentStopEl) {
-        currentStopEl.textContent = bus.currentStop ? `${bus.currentStop.name} (정류장 접근/정차 중)` : '운행 중 (다음 정류장 이동)';
+        currentStopEl.textContent = !isBusInService(bus)
+          ? '미운행 · 운전자가 상행/하행 운행을 시작하면 정류장 정보가 표시됩니다.'
+          : (bus.currentStop ? `${bus.currentStop.name} (정류장 접근/정차 중)` : '운행 중 (다음 정류장 이동)');
       }
 
       const reservationEntry = findReservationEntryForBus(bus);
