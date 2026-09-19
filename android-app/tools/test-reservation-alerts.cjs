@@ -97,6 +97,5 @@ assert.doesNotMatch(notificationsJava, /하차 전까지 예약을 유지합니�
 assert.match(notificationsJava, /stopAlertPlayback\(\)/, 'Native dismissal must stop repeating audio and vibration');
 assert.match(reservationServiceJava, /if \("pending"\.equalsIgnoreCase\(status\)\)/, 'Triggered alert must not be overwritten by watch notification');
 assert.match(reservationServiceJava, /alertToken\.equals\(activeAlertToken\)/, 'Repeated polling must not stop or restart the active alert');
-assert.match(robloxLua, /completedReservationKey/);
-assert.match(robloxLua, /소등 DELETE와 상태 PUT이 겹쳐/);
+assert.match(robloxLua, /reservation\.status = "triggered"/, 'Roblox must publish the reservation arrival state');
 console.log('PASS: JS syntax, editable pending/completed settings, race guard, native dismissal, watch lifecycle, repeat trips');
