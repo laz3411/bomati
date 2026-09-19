@@ -2,6 +2,7 @@
 
 local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 
 -- ★ [설정] 허용할 플레이어의 영어 닉네임("이름") 또는 UserId(숫자)
 local ALLOWED_USERS = {
@@ -58,6 +59,12 @@ spawnEvent.OnServerEvent:Connect(function(player)
 
 	local wheelchair = wheelchairTemplate:Clone()
 	wheelchair.Name = player.Name .. "_Wheelchair"
+	-- Shift+N 관리자 초기화에서 일반 맵 오브젝트와 구분해 제거할 수 있게 표시합니다.
+	wheelchair:SetAttribute("SpawnedWheelchair", true)
+	wheelchair:SetAttribute("AdminResettable", true)
+	wheelchair:SetAttribute("SpawnedByUserId", player.UserId)
+	wheelchair:SetAttribute("SpawnedByUserName", player.Name)
+	CollectionService:AddTag(wheelchair, "ADMIN_RESETTABLE")
 
 	local seat = wheelchair:FindFirstChildOfClass("VehicleSeat")
 	if not seat then return end
