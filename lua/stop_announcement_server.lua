@@ -11,8 +11,8 @@
     3. Sound는 Workspace, SoundService, ReplicatedStorage, ServerStorage 중
        어디에 있어도 검색합니다.
 
-    버스는 BUS CollectionService 태그가 있거나 SpawnedBus Attribute가 true인
-    Model, 또는 Route/route Attribute가 있는 Model이면 인식합니다.
+    버스는 BUS CollectionService 태그가 붙은 Model 또는 그 안의 기준 Part만
+    인식합니다. VehicleSeat, Route, SpawnedBus 속성만 있는 탈것은 제외합니다.
 --]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -26,7 +26,6 @@ local STOP_ID_ATTRIBUTES = {
     "StationId", "stationId", "정류장고유번호", "정류장번호"
 }
 
-local ROUTE_ATTRIBUTES = { "Route", "route", "Line", "line", "노선" }
 local TRIGGER_NAME_HINTS = { "trigger", "touch", "stop", "정류장" }
 
 local PREVIEW_SOUND_PREFIX = "StopAnnouncement_"
@@ -110,20 +109,23 @@ end
 
 local function getBusModel(instance)
     local current = instance
-    local candidate = nil
+    local taggedModel = nil
     while current and current ~= workspace do
-        if current:IsA("Model") then
-            local isTaggedBus = CollectionService:HasTag(current, "BUS")
-            local isSpawnedBus = current:GetAttribute("SpawnedBus") == true
-            local hasRoute = firstAttribute(current, ROUTE_ATTRIBUTES) ~= nil
-            local hasVehicleSeat = current:FindFirstChildWhichIsA("VehicleSeat", true) ~= nil
-            if isTaggedBus or isSpawnedBus or hasRoute or hasVehicleSeat then
-                candidate = current
+        if CollectionService:HasTag(current, "BUS") then
+            if current:IsA("Model") then
+                -- 중첩 모델에 BUS 태그가 여러 개 있으면 가장 바깥쪽 태그 모델을 사용합니다.
+                taggedModel = current
+            elseif current:IsA("BasePart") then
+                -- 기준 Part에 BUS 태그를 붙인 기존 차량도 지원합니다.
+                local ownerModel = current:FindFirstAncestorOfClass("Model")
+                if ownerModel then
+                    taggedModel = ownerModel
+                end
             end
         end
         current = current.Parent
     end
-    return candidate
+    return taggedModel
 end
 
 local function getBusEmitter(model)
