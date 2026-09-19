@@ -41,7 +41,14 @@ tasks.register('syncWebAssets', Copy) {
         include 'index.html'
         include 'manifest.json'
         include 'sw.js'
-        include 'png/**'
+        // 웹 앱에서 실제로 참조하는 자산만 APK에 포함합니다.
+        // 시안·작업용 PNG 전체를 포함하면 APK 용량이 불필요하게 커집니다.
+        include 'png/부마티 로고.png'
+        include 'png/image/realmap.png'
+        include 'png/icons/apple-touch-icon.png'
+        include 'png/icons/icon-192.png'
+        include 'png/icons/icon-512.png'
+        include 'png/icons/icon.svg'
     }
     into(generatedWebAssets)
 }
