@@ -9,6 +9,8 @@
     3. 뒷문 하차 단말기 Model(또는 투명 트리거 Part)에 "CARD_TERMINAL_EXIT" 태그를 붙입니다.
     4. 단말기 Model에 태그를 붙인 경우, 그 안의 투명 BasePart 이름을
        "CardTerminalTrigger"로 하거나 Attribute "CardTerminalTrigger"를 true로 설정합니다.
+    5. 카드 UI를 숨길 실제 운전석에만 Attribute
+       "CardTerminalDriverSeat" = true를 설정합니다. (권장)
 
     플레이어가 트리거 근처에서 C를 2초간 누르면 카드 태그가 처리됩니다.
     - 같은 버스 입구 단말기를 다시 태그: 이미 처리된 카드입니다
@@ -18,6 +20,7 @@
 
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BUS_TAG = "BUS"
 local ENTRY_TERMINAL_TAG = "CARD_TERMINAL_ENTRY"
@@ -103,6 +106,35 @@ local function getCardState(player)
 	return state
 end
 
+local function isCardTerminalDriverSeat(seatPart)
+	if not seatPart or not seatPart:IsA("VehicleSeat") then
+		return false
+	end
+
+	-- 모든 VehicleSeat를 막으면 승객 좌석에서도 카드가 막히므로,
+	-- 지정 Attribute 또는 명확한 운전석 이름만 운전석으로 취급합니다.
+	if seatPart:GetAttribute("CardTerminalDriverSeat") == true then
+		return true
+	end
+
+	if seatPart.Name == "운전석" then
+		return true
+	end
+	local seatName = string.lower(seatPart.Name)
+	return seatName == "driveseat"
+		or seatName == "driverseat"
+		or seatName == "driver"
+		or string.find(seatName, "driver", 1, true) ~= nil
+		or string.find(seatName, "drive", 1, true) ~= nil
+end
+
+local function isPlayerInCardTerminalDriverSeat(player)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local seatPart = humanoid and humanoid.SeatPart
+	return isCardTerminalDriverSeat(seatPart)
+end
+
 local function playTerminalVoice(triggerPart, soundId, label)
 	local previous = triggerPart:FindFirstChild("BusCardTerminalVoice")
 	if previous and previous:IsA("Sound") then
@@ -133,6 +165,12 @@ local function playTerminalVoice(triggerPart, soundId, label)
 end
 
 local function processCardTag(player, terminalType, terminal, triggerPart)
+	-- 명시적으로 지정한 실제 운전석에서만 카드 단말기를 사용할 수 없습니다.
+	-- UI를 강제로 보이게 한 클라이언트도 서버 처리까지는 통과하지 못하게 막습니다.
+	if isPlayerInCardTerminalDriverSeat(player) then
+		return
+	end
+
 	local busModel = getBusModel(terminal) or getBusModel(triggerPart)
 	if not busModel then
 		warn(string.format("[카드 단말기] BUS 태그가 붙은 상위 버스를 찾지 못했습니다: %s", terminal:GetFullName()))
