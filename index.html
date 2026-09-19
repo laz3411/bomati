@@ -1617,6 +1617,17 @@
       </div>
     </div>
 
+    <div id="disabilityRevokeConfirmModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="disabilityRevokeConfirmTitle">
+      <div class="modal-card">
+        <h2 id="disabilityRevokeConfirmTitle">장애인 하차벨 인증 취소</h2>
+        <p class="demo-login-copy">인증을 취소하면 즉시 일반 하차벨 방식으로 전환됩니다. 인증을 취소할까요?</p>
+        <div class="modal-actions">
+          <button id="disabilityRevokeNoBtn" class="modal-btn" type="button">아니요</button>
+          <button id="disabilityRevokeYesBtn" class="modal-btn danger" type="button">인증 취소</button>
+        </div>
+      </div>
+    </div>
+
     <div id="reservationSwitchModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="reservationSwitchTitle">
       <div class="modal-card">
         <h2 id="reservationSwitchTitle">기존 하차 예약 변경</h2>
@@ -1773,6 +1784,25 @@
     const disabilityVerificationFormPanel = document.getElementById('disabilityVerificationFormPanel');
     const disabilityVerifiedPanel = document.getElementById('disabilityVerifiedPanel');
     const disabilityVerificationError = document.getElementById('disabilityVerificationError');
+    const disabilityRevokeConfirmModal = document.getElementById('disabilityRevokeConfirmModal');
+    let disabilityRevokeResolver = null;
+
+    function finishDisabilityRevokeConfirmation(confirmed) {
+      disabilityRevokeConfirmModal?.classList.add('hidden');
+      const resolver = disabilityRevokeResolver;
+      disabilityRevokeResolver = null;
+      if (resolver) resolver(confirmed === true);
+    }
+
+    function confirmDisabilityRevoke() {
+      if (disabilityRevokeResolver) finishDisabilityRevokeConfirmation(false);
+      if (!disabilityRevokeConfirmModal) return Promise.resolve(false);
+      disabilityRevokeConfirmModal.classList.remove('hidden');
+      return new Promise((resolve) => { disabilityRevokeResolver = resolve; });
+    }
+
+    document.getElementById('disabilityRevokeNoBtn')?.addEventListener('click', () => finishDisabilityRevokeConfirmation(false));
+    document.getElementById('disabilityRevokeYesBtn')?.addEventListener('click', () => finishDisabilityRevokeConfirmation(true));
 
     function getFirebaseAuthErrorMessage(error) {
       const code = String(error && error.code || '');
@@ -2060,7 +2090,7 @@
         showToast('로그인 상태를 확인할 수 없습니다.');
         return;
       }
-      if (!window.confirm('장애인 하차벨 인증을 취소할까요? 취소 즉시 일반 하차벨 방식으로 전환됩니다.')) {
+      if (!await confirmDisabilityRevoke()) {
         return;
       }
 
@@ -2073,6 +2103,14 @@
           disabilityBellConsentAt: null,
           disabilityVerification: null
         });
+        // 실시간 프로필 응답을 기다리지 않아도 버튼과 벨 방식이 즉시 바뀝니다.
+        if (demoProfile && demoProfile.uid === user.uid) {
+          demoProfile.accessibility = false;
+          demoProfile.disabilityBellVerified = false;
+          demoProfile.disabilityBellTermsVersion = null;
+          demoProfile.disabilityVerification = null;
+          renderDemoProfile();
+        }
         closeDisabilityVerification();
         showToast('장애인 하차벨 인증이 취소되었습니다.');
       } catch (error) {
@@ -2583,7 +2621,8 @@
         // 예약 여부 확인
         let isReserved = false;
         for (const [busKey, res] of Object.entries(currentReservations)) {
-          if (reservationMatchesStop(res, stop)) {
+          // 도착 알림(triggered) 후에도 게임 벨이 실제 소등되어 예약이 삭제될 때까지 표시합니다.
+          if (shouldShowReservationStop(busKey, res) && reservationMatchesStop(res, stop)) {
             isReserved = true;
             break;
           }
@@ -3066,6 +3105,8 @@
           }));
         const visibleBuses = dedupeBusPayloads(rawBuses);
         replaceBuses(visibleBuses);
+        // Firebase 기록보다 Roblox가 전송한 실제 하차벨 소등 상태를 우선합니다.
+        reconcileTriggeredReservationsWithGameBell();
         if (boardedBusId) {
           rememberReservationsOnCurrentBus();
         } else if (wasBoardedBeforeRadarUpdate) {
@@ -3841,6 +3882,8 @@
     // ==========================================
     let selectedBusId = null;
     let currentReservations = {};
+    const triggeredReservationsSeenBellOn = new Set();
+    const triggeredReservationCleanupInFlight = new Set();
     let bellAlertTimer = null;
     let reservationSheetPointerActive = false;
     let reservationSheetRenderQueued = false;
@@ -3930,6 +3973,46 @@
 
     function isTrackedReservation(reservation) {
       return isActiveReservation(reservation) || reservation?.status === 'triggered';
+    }
+
+    function shouldShowReservationStop(key, reservation) {
+      if (isActiveReservation(reservation)) return true;
+      if (String(reservation?.status || '').toLowerCase() !== 'triggered') return false;
+      const bus = findBusForReservation(key, reservation);
+      return !!bus && isBusBellEngaged(bus);
+    }
+
+    function reconcileTriggeredReservationsWithGameBell() {
+      if (!db) return;
+      for (const [key, reservation] of Object.entries(currentReservations)) {
+        if (String(reservation?.status || '').toLowerCase() !== 'triggered') continue;
+        const bus = findBusForReservation(key, reservation);
+        if (!bus) continue;
+        const token = `${key}@${reservation.reservedAt ?? '0'}`;
+        if (isBusBellEngaged(bus)) {
+          triggeredReservationsSeenBellOn.add(token);
+          continue;
+        }
+        const triggeredAt = Number(reservation.triggeredAt || 0);
+        const confirmedOff = triggeredReservationsSeenBellOn.has(token)
+          || (triggeredAt > 0 && Date.now() - triggeredAt >= 2_000);
+        if (!confirmedOff || triggeredReservationCleanupInFlight.has(token)) continue;
+
+        triggeredReservationCleanupInFlight.add(token);
+        cancellingReservationKeys.add(key);
+        delete currentReservations[key];
+        syncNativeReservationWatch();
+        scheduleReservationSheetRender();
+        db.ref(`radar/reservations/${key}`).remove().catch((error) => {
+          console.error('[Firebase] 게임 하차벨 소등 후 예약 정리 실패:', error);
+          currentReservations[key] = reservation;
+          syncNativeReservationWatch();
+        }).finally(() => {
+          triggeredReservationsSeenBellOn.delete(token);
+          triggeredReservationCleanupInFlight.delete(token);
+          cancellingReservationKeys.delete(key);
+        });
+      }
     }
 
     function reservationTargetsBus(key, reservation, bus) {
@@ -5120,16 +5203,30 @@
       const reservationKey = reservationEntry
         ? reservationEntry.key
         : (bus ? getBusReservationKey(bus) : toFirebaseKey(busId));
+      const savedReservation = reservationEntry?.reservation
+        ? Object.assign({}, reservationEntry.reservation)
+        : currentReservations[reservationKey];
       autoCancelledReservations.delete(reservationKey);
+      cancellingReservationKeys.add(reservationKey);
+      // 화면이나 알림창에서 취소하는 순간 재생 중인 소리·진동부터 즉시 멈춥니다.
+      const alertToken = `${reservationKey}@${savedReservation?.reservedAt ?? '0'}`;
+      try { window.BumatiAndroid?.dismissReservationAlert?.(alertToken); } catch (_) {}
+      activeNativeAlertToken = null;
+      stopReservationAlertFeedback();
+      delete currentReservations[reservationKey];
+      syncNativeReservationWatch();
+      renderReservationSheet();
       db.ref('radar/reservations/' + reservationKey).remove().then(() => {
-        delete currentReservations[reservationKey];
-        syncNativeReservationWatch();
+        showToast('하차 예약을 취소했습니다.');
       }).catch((error) => {
         console.error('[Firebase] 하차 예약 취소 실패:', error);
+        if (savedReservation) currentReservations[reservationKey] = savedReservation;
+        syncNativeReservationWatch();
+        renderReservationSheet();
         showToast('하차 예약 취소에 실패했습니다. Firebase 규칙을 확인하세요.');
+      }).finally(() => {
+        cancellingReservationKeys.delete(reservationKey);
       });
-      showToast('하차 예약을 취소했습니다.');
-      renderReservationSheet();
     }
 
     function requestMobileNotificationPermission() {

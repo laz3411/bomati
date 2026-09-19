@@ -770,6 +770,8 @@ resetBusBell = function(busModel, notifyFirebase)
         return
     end
 
+    local completedReservationKey = system.activeReservationKey
+    system.activeReservationKey = nil
     system.isRinging = false
     system.isSpecialRinging = false
     system.normalBellUsed = false
@@ -827,6 +829,25 @@ resetBusBell = function(busModel, notifyFirebase)
             end)
             if not success then
                 warn("[로블록스 하차벨] Firebase 소등 이벤트 전송 실패:", err)
+            end
+        end)
+    end
+
+    -- 예약으로 울린 벨이 문 열림/게임 신호로 꺼지면 해당 예약도 완료 처리합니다.
+    -- 기록을 남겨두면 앱 지도에 노란 정류장과 벨 아이콘이 계속 남습니다.
+    if completedReservationKey then
+        task.spawn(function()
+            local success, err = pcall(function()
+                local response = HttpService:RequestAsync({
+                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. completedReservationKey .. ".json",
+                    Method = "DELETE"
+                })
+                if not response.Success then
+                    error(string.format("Firebase reservation delete HTTP %s: %s", response.StatusCode, response.StatusMessage))
+                end
+            end)
+            if not success then
+                warn("[하차 완료 예약 삭제 실패]", err)
             end
         end)
     end
@@ -2427,6 +2448,8 @@ local function collectBusData()
                     local referencePos = frontPart and frontPart.Position or pos
                     local distToTarget = horizontalDistance(referencePos, targetStop.position)
                     if distToTarget <= ARRIVAL_TRIGGER_DISTANCE then
+                        -- 게임 벨이 이미 켜져 있더라도 이 예약은 해당 벨이 꺼질 때 완료됩니다.
+                        bellSystem.activeReservationKey = reservationKey
                         -- 이미 게임 하차벨이 켜진 차량은 예약 도착으로 다시 울리지 않습니다.
                         -- 예약 상태만 triggered로 바꿔 앱의 진동/알림은 계속 전달합니다.
                         if not bellSystem.isRinging then
@@ -2437,14 +2460,28 @@ local function collectBusData()
                             print("[하차 예약] 기존 하차벨 작동 중 - 게임 벨 재작동 없이 앱 알림만 전송:", targetStop.name)
                         end
                         reservation.status = "triggered"
+                        reservation.triggeredAt = DateTime.now().UnixTimestampMillis
                         task.spawn(function()
                             pcall(function()
-                                HttpService:RequestAsync({
-                                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. reservationKey .. "/status.json",
-                                    Method = "PUT",
+                                local response = HttpService:RequestAsync({
+                                    Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. reservationKey .. ".json",
+                                    Method = "PATCH",
                                     Headers = { ["Content-Type"] = "application/json" },
-                                    Body = HttpService:JSONEncode("triggered")
+                                    Body = HttpService:JSONEncode({
+                                        status = "triggered",
+                                        triggeredAt = reservation.triggeredAt
+                                    })
                                 })
+                                if not response.Success then
+                                    error(string.format("Firebase reservation trigger HTTP %s: %s", response.StatusCode, response.StatusMessage))
+                                end
+                                -- 소등 DELETE와 상태 PUT이 겹쳐 PUT이 예약을 되살리는 경쟁을 막습니다.
+                                if bellSystem.activeReservationKey ~= reservationKey then
+                                    HttpService:RequestAsync({
+                                        Url = FIREBASE_DATABASE_URL .. "/radar/reservations/" .. reservationKey .. ".json",
+                                        Method = "DELETE"
+                                    })
+                                end
                             end)
                         end)
                     end

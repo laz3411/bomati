@@ -1,6 +1,7 @@
 package com.bumati.app;
 
 import android.app.NotificationChannel;
+import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.ContentResolver;
@@ -20,7 +21,8 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
 final class BumatiNotifications {
-    static final String WATCH_CHANNEL = "bumati_reservation_watch_v1";
+    // 채널 이름은 Android가 최초 생성 값을 보존하므로 새 ID로 갱신합니다.
+    static final String WATCH_CHANNEL = "bumati_reservation_v2";
     private static final String ALERT_CHANNEL_CLASSIC = "bumati_stop_classic_v4";
     private static final String ALERT_CHANNEL_GENTLE = "bumati_stop_gentle_v4";
     private static final String ALERT_CHANNEL_URGENT = "bumati_stop_urgent_v4";
@@ -34,11 +36,11 @@ final class BumatiNotifications {
     private static Runnable stopAlertRunnable;
     private static String activeToken = "";
 
-    static void postReservationAlert(Context context, String token, String stop, String sound, int duration) {
-        if (context.getSharedPreferences("bumati_alerts", 0).getBoolean("handled:" + token, false)) return;
+    static Notification postReservationAlert(Context context, String token, String stop, String sound, int duration) {
+        if (context.getSharedPreferences("bumati_alerts", 0).getBoolean("handled:" + token, false)) return null;
         context.getSharedPreferences("bumati_alerts", 0).edit().putBoolean("handled:" + token, true).apply();
         activeToken = token;
-        postStopAlert(context, "BUMATI 하차 알림", stop + "에서 하차하세요.", sound, duration, true);
+        return createStopAlert(context, "BUMATI 하차 알림", stop + "에서 하차하세요.", sound, duration, true, false);
     }
 
     static void dismiss(Context context, String token) {
@@ -48,6 +50,8 @@ final class BumatiNotifications {
         if (token == null || activeToken.isEmpty() || token.equals(activeToken)) {
             stopAlertPlayback();
             NotificationManagerCompat.from(context).cancel(STOP_NOTIFICATION_ID);
+            NotificationManagerCompat.from(context).cancel(WATCH_NOTIFICATION_ID);
+            context.stopService(new Intent(context, BumatiReservationService.class));
         }
     }
 
@@ -67,6 +71,7 @@ final class BumatiNotifications {
         watch.setShowBadge(false);
         watch.setSound(null, null);
         manager.createNotificationChannel(watch);
+        manager.deleteNotificationChannel("bumati_reservation_watch_v1");
 
         createAlertChannel(context, manager, ALERT_CHANNEL_CLASSIC, "BUMATI 기본 하차 알림", R.raw.bumati_classic, new long[]{0, 260, 90, 260, 90, 420});
         createAlertChannel(context, manager, ALERT_CHANNEL_GENTLE, "BUMATI 부드러운 하차 알림", R.raw.bumati_gentle, new long[]{0, 420, 220, 420});
@@ -132,8 +137,8 @@ final class BumatiNotifications {
 
         return new NotificationCompat.Builder(context, WATCH_CHANNEL)
                 .setSmallIcon(R.drawable.ic_bumati_notification)
-                .setContentTitle("BUMATI 하차 예약 중")
-                .setContentText(stopName + " · 하차 전까지 예약을 유지합니다.")
+                .setContentTitle(stopName + " 하차 예정")
+                .setContentText("BUMATI 하차 예약")
                 .setContentIntent(openPendingIntent)
                 .addAction(0, "하차 예약 취소", stopPendingIntent)
                 .setOngoing(true)
@@ -149,6 +154,18 @@ final class BumatiNotifications {
             String sound,
             int durationSeconds,
             boolean playSound
+    ) {
+        createStopAlert(context, title, body, sound, durationSeconds, playSound, true);
+    }
+
+    private static Notification createStopAlert(
+            Context context,
+            String title,
+            String body,
+            String sound,
+            int durationSeconds,
+            boolean playSound,
+            boolean postNotification
     ) {
         createChannels(context);
         String channel = alertChannel(sound);
@@ -170,6 +187,20 @@ final class BumatiNotifications {
         PendingIntent dismissPending = PendingIntent.getBroadcast(context, 2201, dismissIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
+        PendingIntent cancelReservationPending = null;
+        int tokenSeparator = activeToken.lastIndexOf('@');
+        if (tokenSeparator > 0 && tokenSeparator < activeToken.length() - 1) {
+            String reservationKey = activeToken.substring(0, tokenSeparator);
+            String reservationStamp = activeToken.substring(tokenSeparator + 1);
+            Intent cancelIntent = new Intent(context, BumatiReservationService.class)
+                    .setAction(BumatiReservationService.ACTION_CANCEL)
+                    .setData(Uri.parse("bumati://cancel-alert/" + Uri.encode(activeToken)))
+                    .putExtra("key", reservationKey)
+                    .putExtra("stamp", reservationStamp);
+            cancelReservationPending = PendingIntent.getService(context, 2202, cancelIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        }
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_bumati_notification)
                 .setContentTitle(title == null || title.trim().isEmpty() ? "BUMATI 하차 알림" : title)
@@ -184,12 +215,16 @@ final class BumatiNotifications {
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setVibrate(vibration)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+        if (cancelReservationPending != null) {
+            builder.addAction(0, "하차 예약 취소", cancelReservationPending);
+        }
         // 화면 표시 여부와 관계없이 시스템 알림 채널의 음량·소리·진동 설정을 따릅니다.
         // 설정한 재생 시간이 끝나면 소리·진동과 알림 카드를 함께 제거합니다.
 
         try {
             if (playSound) stopAlertPlayback();
-            NotificationManagerCompat.from(context).notify(STOP_NOTIFICATION_ID, builder.build());
+            Notification notification = builder.build();
+            if (postNotification) NotificationManagerCompat.from(context).notify(STOP_NOTIFICATION_ID, notification);
             if (playSound && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
                 boolean allowSound = true;
                 boolean allowVibration = true;
@@ -209,8 +244,10 @@ final class BumatiNotifications {
                     startAlertPlayback(context, sound, alertDuration, allowSound, allowVibration);
                 }
             }
+            return notification;
         } catch (SecurityException ignored) {
             // Android 13+ 알림 권한을 거부한 경우 앱 화면 알림은 계속 동작합니다.
+            return builder.build();
         }
     }
 

@@ -41,6 +41,7 @@ public class BumatiReservationService extends Service {
     private String activeReservationKey = "";
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
     private String currentStamp = "";
+    private String activeAlertToken = "";
 
     static void start(Context context, String key, String stopName, String sound, int durationSeconds) {
         if (key == null || key.trim().isEmpty()) return;
@@ -181,18 +182,46 @@ public class BumatiReservationService extends Service {
                         main.post(() -> {
                             if (generation.get() != expectedGeneration) return;
                             currentStamp = stamp;
-                            BumatiNotifications.postReservationAlert(this, key + "@" + stamp, targetName, targetSound, targetDuration);
+                            String alertToken = key + "@" + stamp;
+                            if (alertToken.equals(activeAlertToken)) return;
+                            android.app.Notification alertNotification = BumatiNotifications.postReservationAlert(
+                                    this, alertToken, targetName, targetSound, targetDuration);
+                            if (alertNotification == null) {
+                                // 이미 처리한 도착 알림을 서비스 재시작으로 다시 표시하지 않습니다.
+                                clearSavedReservation();
+                                stopWatching();
+                                stopForeground(STOP_FOREGROUND_REMOVE);
+                                stopSelf();
+                                return;
+                            }
+                            activeAlertToken = alertToken;
+                            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                                    ? ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                                    : 0;
+                            // 예약 대기 알림을 같은 ID의 도착 알림으로 교체해 두 알림이 겹치지 않게 합니다.
+                            ServiceCompat.startForeground(
+                                    this,
+                                    BumatiNotifications.WATCH_NOTIFICATION_ID,
+                                    alertNotification,
+                                    type
+                            );
                         });
                     }
                     String stamp = reservation.optString("reservedAt", "0");
-                    main.post(() -> {
-                        if (generation.get() != expectedGeneration) return;
-                        currentStamp = stamp;
-                        androidx.core.app.NotificationManagerCompat.from(this).notify(
-                            BumatiNotifications.WATCH_NOTIFICATION_ID,
-                            BumatiNotifications.buildWatchNotification(this,
-                                reservation.optString("targetStopName", stopName), key, stamp).build());
-                    });
+                    if ("pending".equalsIgnoreCase(status)) {
+                        main.post(() -> {
+                            if (generation.get() != expectedGeneration) return;
+                            currentStamp = stamp;
+                            try {
+                                androidx.core.app.NotificationManagerCompat.from(this).notify(
+                                    BumatiNotifications.WATCH_NOTIFICATION_ID,
+                                    BumatiNotifications.buildWatchNotification(this,
+                                        reservation.optString("targetStopName", stopName), key, stamp).build());
+                            } catch (SecurityException ignored) {
+                                // 알림 권한이 없어도 예약 확인은 계속합니다.
+                            }
+                        });
+                    }
                     if (!"pending".equalsIgnoreCase(status) && !"triggered".equalsIgnoreCase(status)) {
                         finishWatch(expectedGeneration, false, stopName, sound, duration);
                         return;
@@ -297,7 +326,11 @@ public class BumatiReservationService extends Service {
             String etag = connection.getHeaderField("ETag");
             if (!"null".equals(body.toString().trim())) {
                 JSONObject reservation = new JSONObject(body.toString());
-                if (!stamp.equals(reservation.optString("reservedAt", "0"))) throw new Exception("예약이 변경되었습니다. 앱에서 확인하세요.");
+                String liveStamp = reservation.optString("reservedAt", "0");
+                boolean activeServiceReservation = key.equals(activeReservationKey);
+                if ((!stamp.isEmpty() || !activeServiceReservation) && !stamp.equals(liveStamp)) {
+                    throw new Exception("예약이 변경되었습니다. 앱에서 확인하세요.");
+                }
                 if (etag == null) throw new Exception("예약 버전 확인 실패");
                 connection.disconnect();
                 connection = (HttpURLConnection) new java.net.URL(url).openConnection();
@@ -329,6 +362,7 @@ public class BumatiReservationService extends Service {
     private void clearSavedReservation() {
         getSharedPreferences(PREFS, 0).edit().clear().apply();
         activeReservationKey = "";
+        activeAlertToken = "";
     }
 
     private void stopWatching() {
@@ -349,6 +383,7 @@ public class BumatiReservationService extends Service {
     public void onDestroy() {
         main.removeCallbacksAndMessages(null);
         BumatiNotifications.stopAlertPlayback();
+        stopForeground(STOP_FOREGROUND_REMOVE);
         stopWatching();
         executor.shutdownNow();
         cancelWorker.shutdownNow();

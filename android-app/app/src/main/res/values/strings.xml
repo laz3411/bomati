@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">BUMATI</string>
-    <string name="reservation_watch_channel">하차 예약 감시</string>
+    <string name="reservation_watch_channel">하차 예약</string>
     <string name="stop_alert_channel">하차 알림</string>
 </resources>
