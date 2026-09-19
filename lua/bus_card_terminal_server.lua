@@ -255,6 +255,16 @@ Players.PlayerRemoving:Connect(function(player)
 	playerCardStates[player.UserId] = nil
 end)
 
+-- Shift+N 초기화 뒤에는 모든 플레이어가 첫 승차처럼 다시 카드 태그를 시작합니다.
+task.spawn(function()
+	local resetSignal = ReplicatedStorage:WaitForChild("AdminWorldResetSignal", 30)
+	if resetSignal and resetSignal:IsA("BindableEvent") then
+		resetSignal.Event:Connect(function()
+			playerCardStates = {}
+		end)
+	end
+end)
+
 workspace.DescendantAdded:Connect(function(instance)
 	task.defer(registerAncestorTerminal, instance)
 end)

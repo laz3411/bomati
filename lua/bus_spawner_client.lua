@@ -283,12 +283,25 @@ local function toggleSelector()
     end
 end
 
+local function isShiftHeld()
+    return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+        or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+end
+
 closeButton.Activated:Connect(function()
     screenGui.Enabled = false
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if UserInputService:GetFocusedTextBox() then
+        return
+    end
+
+    -- Shift+N은 관리자 월드 초기화입니다. 서버가 실제 소환물을 지우기 전에
+    -- 이 클라이언트에만 존재하는 배치 미리보기와 선택창도 함께 닫습니다.
+    if isShiftHeld() and input.KeyCode == Enum.KeyCode.N then
+        destroyPreview()
+        screenGui.Enabled = false
         return
     end
 

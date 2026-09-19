@@ -8,6 +8,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+local CollectionService = game:GetService("CollectionService")
 
 -- 현재 프로젝트의 기존 대상 계정을 기본 관리자로 등록합니다.
 -- 이름은 바뀔 수 있으므로, 실제 운영 전에는 UserId를 ADMIN_USER_IDS에 넣는 것을 권장합니다.
@@ -157,6 +158,50 @@ local function publishBellReset()
 	end
 end
 
+local function isLegacySpawnedWheelchair(model)
+	return string.sub(model.Name, -11) == "_Wheelchair"
+		and model:FindFirstChildWhichIsA("VehicleSeat", true) ~= nil
+end
+
+local function isResettableDynamicModel(model)
+	return model:GetAttribute("SpawnedBus") == true
+		or model:GetAttribute("SpawnedWheelchair") == true
+		or model:GetAttribute("AdminResettable") == true
+		or CollectionService:HasTag(model, "ADMIN_RESETTABLE")
+		-- 기존에 이미 소환돼 Attribute가 없는 휠체어도 이번 초기화에서 정리합니다.
+		or isLegacySpawnedWheelchair(model)
+end
+
+local function releaseVehicleOccupants(model)
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("VehicleSeat") and descendant.Occupant then
+			descendant.Occupant.Sit = false
+		end
+	end
+end
+
+local function clearDynamicWorldObjects()
+	local targets = {}
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		if descendant:IsA("Model") and isResettableDynamicModel(descendant) then
+			table.insert(targets, descendant)
+		end
+	end
+
+	for _, model in ipairs(targets) do
+		if model.Parent then
+			releaseVehicleOccupants(model)
+			model:Destroy()
+		end
+	end
+
+	-- 정류장 안내방송이 재생 중이었다면 남아 있는 임시 발신점과 Sound도 제거합니다.
+	local emitters = workspace:FindFirstChild("StopAnnouncementEmitters")
+	if emitters then
+		emitters:Destroy()
+	end
+end
+
 local function resetWorld(player)
 	local now = os.clock()
 	if now - (lastResetAt[player] or 0) < 3 then
@@ -164,12 +209,8 @@ local function resetWorld(player)
 	end
 	lastResetAt[player] = now
 
-	-- 소환 시스템이 만든 버스만 삭제하고, 맵에 원래 배치된 버스는 보존합니다.
-	for _, child in ipairs(workspace:GetChildren()) do
-		if child:IsA("Model") and child:GetAttribute("SpawnedBus") == true then
-			child:Destroy()
-		end
-	end
+	-- 소환 시스템이 만든 버스·휠체어 등만 삭제하고, 맵에 원래 배치된 버스는 보존합니다.
+	clearDynamicWorldObjects()
 
 	-- 레이더/하차벨 스크립트가 보유한 게임 내 벨 상태와 예약 캐시를 초기화합니다.
 	resetSignal:Fire()
