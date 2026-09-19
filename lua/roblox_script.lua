@@ -338,6 +338,11 @@ local function getOrCreateBusBellSystem(busModel)
 		if not prompt:IsA("ProximityPrompt") or system.connectedPrompts[prompt] then
 			return
 		end
+		-- 승·하차 카드 단말기처럼 하차벨과 관계없는 프롬프트는 이 스크립트가
+		-- 하차벨 입력으로 연결하지 않습니다.
+		if prompt:GetAttribute("IgnoreBusBell") == true then
+			return
+		end
 		system.connectedPrompts[prompt] = true
 		table.insert(system.prompts, prompt)
 		addUnique(isSpecial and system.specialPrompts or system.normalPrompts, prompt)
