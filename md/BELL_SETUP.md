@@ -2,13 +2,13 @@
 
 ## 1. 기본 설정 및 설치
 
-1. `roblox_script.lua`를 로블록스 스튜디오의 `ServerScriptService` 아래에 `Script`로 붙여넣고, `TARGET_ROBLOX_USER_NAME`을 본인의 실제 Roblox 영어 사용자명(Player.Name)으로 설정합니다.
+1. `lua/roblox_script.lua`를 로블록스 스튜디오의 `ServerScriptService` 아래에 `Script`로 붙여넣고, `TARGET_ROBLOX_USER_NAME`을 본인의 실제 Roblox 영어 사용자명(Player.Name)으로 설정합니다.
 2. 로블록스 상단 메뉴 **[Game Settings] -> [Security] -> "Allow HTTP Requests"** 를 **ON**으로 활성화합니다.
-3. 최신 `micropython_bell_controller.py`를 피지컬 하차벨 보드(Raspberry Pi Pico 등)의 `main.py`로 업로드합니다. (시리얼 보드레이트: 115200)
+3. 최신 `python/micropython_bell_controller.py`를 피지컬 하차벨 보드(Raspberry Pi Pico 등)의 `main.py`로 업로드합니다. (시리얼 보드레이트: 115200)
 4. PC에서 의존성을 설치한 뒤 브리지를 실행합니다:
    ```bash
    py -m pip install -r requirements.txt
-   py bell_firebase_bridge.py --port COM5
+   py python/bell_firebase_bridge.py --port COM5
    ```
    *(포트 번호는 장치가 연결된 실제 포트로 지정하세요)*
 
@@ -18,14 +18,14 @@
 
 1. `ReplicatedStorage` 아래에 `BusModels`라는 **Folder**를 만들고, 소환할 버스 **Model**들을 그 안으로 옮깁니다.
 2. 버스가 소환될 별도 파트는 필요하지 않습니다. 플레이어가 바라보는 수평 방향 앞쪽 24 studs, 약 3 studs 위에 미리보기가 나타납니다.
-3. `bus_spawner_server.lua`를 `ServerScriptService` 아래의 **Script**에 붙여넣습니다.
-4. `bus_spawner_client.lua`를 `StarterPlayer > StarterPlayerScripts` 아래의 **LocalScript**에 붙여넣습니다.
+3. `lua/bus_spawner_server.lua`를 `ServerScriptService` 아래의 **Script**에 붙여넣습니다.
+4. `lua/bus_spawner_client.lua`를 `StarterPlayer > StarterPlayerScripts` 아래의 **LocalScript**에 붙여넣습니다.
 5. 플레이 중 **B**를 누르면 `BusModels` 안의 목록이 열립니다. 버스를 선택하면 마우스가 가리키는 표면에 윤곽선 미리보기가 나타납니다. 마우스 이동으로 위치를 정하고 **마우스 휠/R**로 15도씩 회전합니다. **좌클릭/T**로 확정 설치하고 **우클릭/B/Esc**로 취소할 수 있습니다. 확정하면 기존에 본인이 소환한 버스가 삭제됩니다.
 
 ### 관리자 비행/투명화
 
-1. `admin_fly_server.lua`를 `ServerScriptService` 아래의 **Script**에 붙여넣습니다.
-2. `admin_fly_client.lua`를 `StarterPlayer > StarterPlayerScripts` 아래의 **LocalScript**에 붙여넣습니다.
+1. `lua/admin_fly_server.lua`를 `ServerScriptService` 아래의 **Script**에 붙여넣습니다.
+2. `lua/admin_fly_client.lua`를 `StarterPlayer > StarterPlayerScripts` 아래의 **LocalScript**에 붙여넣습니다.
 3. 기본 관리자는 현재 `laz3411`로 설정되어 있습니다. 다른 계정은 서버 스크립트의 `ADMIN_USER_IDS`에 Roblox UserId를 추가하세요.
 4. 관리자만 게임 안에서 다음 키를 사용할 수 있습니다:
    - **Shift + F**: 비행 켜기/끄기
@@ -42,7 +42,7 @@
 - Roblox의 `ProximityPrompt` 또는 자동 예약 벨이 울리면 Roblox가 Firebase `/bell/latest`에 `source = roblox` 이벤트를 기록하고, PC 브리지가 보드로 `BELL A` 명령을 보냅니다.
 - 피지컬 A/B 버튼을 누르면 보드가 `BELL_EVENT`를 USB 시리얼로 보내고, PC 브리지가 Firebase에 `source = physical` 이벤트를 기록합니다. Roblox가 이 이벤트를 읽어 게임 안의 탑승 버스 벨도 울립니다.
 - 물리 이벤트를 Roblox에서 다시 Firebase로 되쏘지 않도록 `source`와 `eventId`로 무한 반복을 차단합니다.
-- 양방향 연동을 사용하려면 `roblox_script.lua`, `micropython_bell_controller.py`, `bell_firebase_bridge.py`를 각각 최신 버전으로 적용해야 합니다. 기존에 Studio나 보드에 올린 파일은 자동으로 바뀌지 않습니다.
+- 양방향 연동을 사용하려면 `lua/roblox_script.lua`, `python/micropython_bell_controller.py`, `python/bell_firebase_bridge.py`를 각각 최신 버전으로 적용해야 합니다. 기존에 Studio나 보드에 올린 파일은 자동으로 바뀌지 않습니다.
 
 ---
 
@@ -129,18 +129,18 @@
 
 ## 6. 플레이어별 지정 스폰
 
-`named_spawn_server.lua`를 `ServerScriptService` 아래의 **Script**에 넣고, `Workspace`에 Anchored Part를 만든 뒤 스크립트의 `PLAYER_SPAWN_PARTS` 표에 플레이어 이름과 파트 이름을 연결합니다. 해당 플레이어는 입장하거나 리스폰할 때마다 지정된 파트 위로 이동합니다.
+`lua/named_spawn_server.lua`를 `ServerScriptService` 아래의 **Script**에 넣고, `Workspace`에 Anchored Part를 만든 뒤 스크립트의 `PLAYER_SPAWN_PARTS` 표에 플레이어 이름과 파트 이름을 연결합니다. 해당 플레이어는 입장하거나 리스폰할 때마다 지정된 파트 위로 이동합니다.
 
 ---
 
 ## 7. 접촉식 정류장 안내방송
 
-`stop_announcement_server.lua`는 버스가 정류장 트리거 파트에 닿는 즉시 방송합니다. 기존의 거리/노선 순서 계산은 사용하지 않습니다.
+`lua/stop_announcement_server.lua`는 버스가 정류장 트리거 파트에 닿는 즉시 방송합니다. 기존의 거리/노선 순서 계산은 사용하지 않습니다.
 
 1. `Workspace` 안에 정류장마다 트리거용 **BasePart**를 배치합니다.
 2. 트리거 파트의 Attribute에 `StopId` 또는 `stopID`를 입력합니다. 값은 `001`, `002`, `003`처럼 입력합니다.
 3. 방송용 `Sound`에도 같은 이름의 Attribute를 입력합니다. 예를 들어 `StopId = "001"`인 Sound는 `StopId = "001"`인 파트에서 재생됩니다.
-4. `stop_announcement_server.lua`를 `ServerScriptService`의 Script로 교체합니다.
+4. `lua/stop_announcement_server.lua`를 `ServerScriptService`의 Script로 교체합니다.
 5. 서버 Output에 `접촉식 모드 활성화: 오디오 n개 / 트리거 파트 n개`가 표시되는지 확인합니다.
 
 Sound는 `Workspace`, `SoundService`, `ReplicatedStorage`, `ServerStorage` 중 어디에 있어도 검색됩니다. 버스는 `BUS` 태그, `SpawnedBus` Attribute, `Route` Attribute, 또는 `VehicleSeat` 중 하나가 있으면 인식됩니다.

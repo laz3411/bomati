@@ -2,7 +2,7 @@
 Firebase Realtime Database 좌표 전송 모의 테스트 스크립트입니다.
 로블록스 스튜디오 없이도 본인의 Firebase DB와 웹앱(index.html)이 잘 연동되는지 테스트할 수 있습니다.
 사용법:
-    python test_firebase_sender.py [Firebase URL]
+    python python/test_firebase_sender.py [Firebase URL]
 """
 
 import json

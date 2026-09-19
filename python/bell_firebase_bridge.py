@@ -4,7 +4,7 @@
 - 원격 하차벨 전담 고속 폴러 (약 0.12초 주기): 로블록스 벨 작동 즉시 보드 신호 전달
 
 예시:
-    py bell_firebase_bridge.py --port COM5
+    py python/bell_firebase_bridge.py --port COM5
 """
 
 import argparse

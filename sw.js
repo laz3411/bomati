@@ -1,12 +1,12 @@
-const CACHE_NAME = 'bumati-radar-v6';
+const CACHE_NAME = 'bumati-radar-v7';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
-  '/image/realmap.png',
+  '/png/image/realmap.png',
   '/manifest.json',
-  '/부마티 로고.png',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png'
+  '/png/부마티 로고.png',
+  '/png/icons/icon-192.png',
+  '/png/icons/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {

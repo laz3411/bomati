@@ -8,7 +8,7 @@
 
 ```text
 [Roblox 게임]
-  roblox_script.lua + 보조 Lua 스크립트
+  lua/roblox_script.lua + lua/ 보조 스크립트
           │  HTTPS(JSON)
           ▼
 [Firebase Realtime Database]
@@ -16,11 +16,11 @@
        ▲                         │
        │                         │ HTTPS 실시간 조회
        │                         ▼
-[웹 지도] index.html ──────── [PC 브리지] bell_firebase_bridge.py
+[웹 지도] index.html ──────── [PC 브리지] python/bell_firebase_bridge.py
        │                              │ USB Serial
        │                              ▼
        │                    [MicroPython 보드]
-       │                    micropython_bell_controller.py
+       │                    python/micropython_bell_controller.py
        │
        └─ Android 빌드 시 WebView + 네이티브 알림 서비스로 패키징
           MainActivity.java / BumatiReservationService.java
@@ -40,9 +40,9 @@
 |---|---|---|
 | [`run.bat`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/run.bat) | Windows PC | `index.html`을 기본 브라우저로 열어 웹 지도를 시작한다. 별도 Python 웹 서버는 실행하지 않는다. |
 | [`index.html`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/index.html) | 브라우저 / Android WebView | 부마티의 실질적인 프론트엔드 본체. Firebase 인증·실시간 데이터·지도 렌더링·예약·벨 알림을 모두 포함한다. |
-| [`bell_firebase_bridge.py`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/bell_firebase_bridge.py) | 하차벨 연결 PC | USB 시리얼과 Firebase 사이를 중계한다. `py bell_firebase_bridge.py --port COM5`로 실행한다. |
-| [`micropython_bell_controller.py`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/micropython_bell_controller.py) | MicroPython 보드 | A/B 물리 버튼, LED/릴레이, 부저를 제어하고 USB 시리얼로 이벤트·명령을 주고받는다. |
-| [`roblox_script.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/roblox_script.lua) | Roblox Studio `ServerScriptService` | Roblox 월드의 핵심 서버 로직. Firebase 레이더 데이터 전송, 예약 처리, 게임 벨, 물리 벨 연동을 담당한다. |
+| [`python/bell_firebase_bridge.py`](../python/bell_firebase_bridge.py) | 하차벨 연결 PC | USB 시리얼과 Firebase 사이를 중계한다. `py python/bell_firebase_bridge.py --port COM5`로 실행한다. |
+| [`python/micropython_bell_controller.py`](../python/micropython_bell_controller.py) | MicroPython 보드 | A/B 물리 버튼, LED/릴레이, 부저를 제어하고 USB 시리얼로 이벤트·명령을 주고받는다. |
+| [`lua/roblox_script.lua`](../lua/roblox_script.lua) | Roblox Studio `ServerScriptService` | Roblox 월드의 핵심 서버 로직. Firebase 레이더 데이터 전송, 예약 처리, 게임 벨, 물리 벨 연동을 담당한다. |
 
 ## 3. 웹 앱 핵심 파일
 
@@ -77,14 +77,14 @@
 
 | 파일 | 사용처 |
 |---|---|
-| `image/realmap.png` | 실제 지도 배경. `index.html` Canvas 렌더링 및 `sw.js` 캐시 대상 |
-| `image/map.png` | 지도 관련 보조 이미지 |
-| `부마티 로고.png` | 웹 로딩 화면 및 Android 웹 자산 |
-| `icons/icon-192.png`, `icons/icon-512.png`, `icons/apple-touch-icon.png`, `icons/icon.svg` | PWA·런처·홈 화면 아이콘 |
+| `png/image/realmap.png` | 실제 지도 배경. `index.html` Canvas 렌더링 및 `sw.js` 캐시 대상 |
+| `png/image/map.png` | 지도 관련 보조 이미지 |
+| `png/부마티 로고.png` | 웹 로딩 화면 및 Android 웹 자산 |
+| `png/icons/icon-192.png`, `png/icons/icon-512.png`, `png/icons/apple-touch-icon.png`, `png/icons/icon.svg` | PWA·런처·홈 화면 아이콘 |
 
 ## 4. Roblox 게임 서버 파일
 
-### [`roblox_script.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/roblox_script.lua) — 필수 핵심 서버 스크립트
+### [`lua/roblox_script.lua`](../lua/roblox_script.lua) — 필수 핵심 서버 스크립트
 
 Roblox `ServerScriptService`에 설치하는 중심 파일이다.
 
@@ -103,17 +103,17 @@ Roblox `ServerScriptService`에 설치하는 중심 파일이다.
 
 | 파일 | Roblox 설치 위치 | 역할 | 운영상 중요도 |
 |---|---|---|---|
-| [`driver_route_gui.client.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/driver_route_gui.client.lua) | `StarterPlayer > StarterPlayerScripts` | 운전자가 버스 운행 방향(상행/하행)을 선택하고 시작·종료한다. `roblox_script.lua`의 RemoteEvent 사용 | 기능 사용 시 필요 |
-| [`bus_spawner_server.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/bus_spawner_server.lua) | `ServerScriptService` | `ReplicatedStorage.BusModels`의 허용 모델만 서버에서 소환하고, 거리·쿨다운·중복 소환을 검증한다. | 버스 소환 기능 사용 시 필요 |
-| [`bus_spawner_client.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/bus_spawner_client.lua) | `StarterPlayer > StarterPlayerScripts` | B키 버스 선택 UI와 미리보기·소환 요청을 담당한다. | 버스 소환 기능 사용 시 필요 |
-| [`stop_announcement_server.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/stop_announcement_server.lua) | `ServerScriptService` | 버스가 정류장 트리거에 접촉하면 StopId에 맞는 안내 음성을 재생한다. | 정류장 안내 방송 사용 시 필요 |
-| [`named_spawn_server.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/named_spawn_server.lua) | `ServerScriptService` | 설정된 플레이어를 이름별 지정 Spawn Part로 이동시킨다. | 운영 편의 기능 |
-| [`admin_fly_server.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/admin_fly_server.lua) | `ServerScriptService` | 관리자 여부를 서버에서 검증하고 관리자 RemoteFunction·RemoteEvent를 만든다. | 관리자 기능 사용 시 필요 |
-| [`admin_fly_client.lua`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/admin_fly_client.lua) | `StarterPlayer > StarterPlayerScripts` | 관리자만 비행·투명화·월드 초기화 기능을 사용하도록 입력과 UI를 처리한다. | 관리자 기능 사용 시 필요 |
+| [`lua/driver_route_gui.client.lua`](../lua/driver_route_gui.client.lua) | `StarterPlayer > StarterPlayerScripts` | 운전자가 버스 운행 방향(상행/하행)을 선택하고 시작·종료한다. `roblox_script.lua`의 RemoteEvent 사용 | 기능 사용 시 필요 |
+| [`lua/bus_spawner_server.lua`](../lua/bus_spawner_server.lua) | `ServerScriptService` | `ReplicatedStorage.BusModels`의 허용 모델만 서버에서 소환하고, 거리·쿨다운·중복 소환을 검증한다. | 버스 소환 기능 사용 시 필요 |
+| [`lua/bus_spawner_client.lua`](../lua/bus_spawner_client.lua) | `StarterPlayer > StarterPlayerScripts` | B키 버스 선택 UI와 미리보기·소환 요청을 담당한다. | 버스 소환 기능 사용 시 필요 |
+| [`lua/stop_announcement_server.lua`](../lua/stop_announcement_server.lua) | `ServerScriptService` | 버스가 정류장 트리거에 접촉하면 StopId에 맞는 안내 음성을 재생한다. | 정류장 안내 방송 사용 시 필요 |
+| [`lua/named_spawn_server.lua`](../lua/named_spawn_server.lua) | `ServerScriptService` | 설정된 플레이어를 이름별 지정 Spawn Part로 이동시킨다. | 운영 편의 기능 |
+| [`lua/admin_fly_server.lua`](../lua/admin_fly_server.lua) | `ServerScriptService` | 관리자 여부를 서버에서 검증하고 관리자 RemoteFunction·RemoteEvent를 만든다. | 관리자 기능 사용 시 필요 |
+| [`lua/admin_fly_client.lua`](../lua/admin_fly_client.lua) | `StarterPlayer > StarterPlayerScripts` | 관리자만 비행·투명화·월드 초기화 기능을 사용하도록 입력과 UI를 처리한다. | 관리자 기능 사용 시 필요 |
 
 ## 5. 물리 하차벨 파일
 
-### [`micropython_bell_controller.py`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/micropython_bell_controller.py)
+### [`python/micropython_bell_controller.py`](../python/micropython_bell_controller.py)
 
 - MicroPython 보드의 GPIO를 직접 제어한다.
 - A벨·B벨 입력, A/B LED, 릴레이, A/B 부저를 분리 제어한다.
@@ -122,14 +122,14 @@ Roblox `ServerScriptService`에 설치하는 중심 파일이다.
 - 물리 버튼을 누르면 `BELL_EVENT {JSON}` 형식으로 PC 브리지에 전송한다.
 - Latch 방식으로 점등 상태를 유지하며, 고상/저상 버스에 따라 A/B 출력 조합을 다르게 처리한다.
 
-### [`bell_firebase_bridge.py`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/bell_firebase_bridge.py)
+### [`python/bell_firebase_bridge.py`](../python/bell_firebase_bridge.py)
 
 - `pyserial`로 MicroPython 보드의 USB Serial을 읽고 쓴다.
 - 물리 버튼 이벤트를 `/bell/latest`에 즉시 PUT하고 `/bell/events`에 이력으로 POST한다.
 - Firebase `/bell/latest`를 고속 폴링해 Roblox에서 발생한 벨 이벤트를 보드에 전달한다.
 - `/radar/bell`의 탑승 컨텍스트에 따라 보드 모드를 LOW/HIGH/IDLE로 바꾼다.
 - 네트워크 지연이나 순간적인 탑승 판정 흔들림으로 벨이 오작동하지 않도록 stale grace·연속 확인·이벤트 중복 방지 로직을 둔다.
-- 실행 예: `py bell_firebase_bridge.py --port COM5`
+- 실행 예: `py python/bell_firebase_bridge.py --port COM5`
 
 ### [`requirements.txt`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/requirements.txt)
 
@@ -154,11 +154,11 @@ Android 앱은 웹 앱을 새로 구현하는 구조가 아니라, 저장소 루
 
 | 파일 | 구분 |
 |---|---|
-| [`test_firebase_sender.py`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/test_firebase_sender.py) | Firebase 데이터 송신 테스트용. 실제 운영 경로에는 포함되지 않는다. |
-| [`BELL_SETUP.md`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/BELL_SETUP.md) | 하차벨 설치·설정 안내 문서. 실행 파일은 아니다. |
+| [`python/test_firebase_sender.py`](../python/test_firebase_sender.py) | Firebase 데이터 송신 테스트용. 실제 운영 경로에는 포함되지 않는다. |
+| [`md/BELL_SETUP.md`](BELL_SETUP.md) | 하차벨 설치·설정 안내 문서. 실행 파일은 아니다. |
 | [`android-app/README.md`](C:/Users/sgwcr/OneDrive/ドキュメント/GitHub/bomati/android-app/README.md) | Android 빌드 안내 문서. 실행 로직은 아니다. |
 | `bu-mati_presentation_revised.md` | 발표 자료 원고. 시스템 실행에는 사용되지 않는다. |
-| `bumati_four_panel_comic.png`, `부마티 로고.png`, `image/**`, `icons/**` | 일부는 실행 화면·캐시에 사용되지만, 로직을 실행하는 코드는 아니다. |
+| `png/bumati_four_panel_comic.png`, `png/부마티 로고.png`, `png/image/**`, `png/icons/**` | 일부는 실행 화면·캐시에 사용되지만, 로직을 실행하는 코드는 아니다. |
 | `android-app/BOMATI-170-debug.apk` | 이미 빌드된 배포 산출물. 소스 실행 경로가 아니라 결과물이다. |
 
 ## 8. PPT용 한 장 요약

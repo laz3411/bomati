@@ -1,6 +1,6 @@
 # BUMATI Android APK
 
-이 폴더는 저장소 루트의 `index.html`, `manifest.json`, `sw.js`, `image/`, `icons/`, `부마티 로고.png`를 APK 안에 자동 포함하는 Android Studio 프로젝트입니다.
+이 폴더는 저장소 루트의 `index.html`, `manifest.json`, `sw.js`, `png/`를 APK 안에 자동 포함하는 Android Studio 프로젝트입니다.
 
 최소 지원 버전은 Android 8(API 26)이며 Android 10(API 29)을 포함합니다. Android 10에서는 별도의 알림 런타임 권한창 없이 알림 채널 설정이 유지됩니다.
 

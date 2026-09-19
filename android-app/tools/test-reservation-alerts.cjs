@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const html = fs.readFileSync(path.join(__dirname, '../../index.html'), 'utf8');
 const notificationsJava = fs.readFileSync(path.join(__dirname, '../app/src/main/java/com/bumati/app/BumatiNotifications.java'), 'utf8');
 const reservationServiceJava = fs.readFileSync(path.join(__dirname, '../app/src/main/java/com/bumati/app/BumatiReservationService.java'), 'utf8');
-const robloxLua = fs.readFileSync(path.join(__dirname, '../../roblox_script.lua'), 'utf8');
+const robloxLua = fs.readFileSync(path.join(__dirname, '../../lua/roblox_script.lua'), 'utf8');
 for (const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(match[1]);
 function extract(name) {
   const start = html.indexOf(`    function ${name}(`);

@@ -6,7 +6,7 @@
 
 ```text
 루트 웹 앱
-index.html + manifest.json + sw.js + image/ + icons/
+index.html + manifest.json + sw.js + png/
              │
              │ Gradle syncWebAssets 작업
              ▼
@@ -30,9 +30,7 @@ tasks.register('syncWebAssets', Copy) {
         include 'index.html'
         include 'manifest.json'
         include 'sw.js'
-        include '부마티 로고.png'
-        include 'icons/**'
-        include 'image/**'
+        include 'png/**'
     }
     into(generatedWebAssets)
 }
