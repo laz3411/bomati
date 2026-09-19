@@ -39,6 +39,9 @@ local SOUND_LOAD_TIMEOUT = 8
 local CONTACT_REARM_DELAY = 0.75
 local SCAN_INTERVAL = 0.25
 local CACHE_LOG_INTERVAL = 3
+-- 게임 시작/버스 생성 직후 이미 트리거 안에 있던 상태는 진입으로 보지 않습니다.
+-- 첫 겹침 스캔에서 상태만 기록하고, 이후 실제로 빠져나갔다가 다시 들어올 때 방송합니다.
+local suppressInitialContacts = true
 
 local announcementByStopId = {}
 local triggerParts = {} -- [BasePart] = normalized stopId
@@ -352,6 +355,11 @@ local function markBusContact(triggerPart, otherPart)
     local state = getBusState(busModel)
     state.lastContactAt[stopId] = os.clock()
 
+    if suppressInitialContacts then
+        state.triggered[stopId] = true
+        return
+    end
+
     if state.triggered[stopId] then
         return
     end
@@ -443,6 +451,11 @@ end)
 
 refreshSoundCache()
 refreshTriggerCache()
+
+-- Touched 이벤트와 첫 GetPartsInPart 스캔이 모두 끝난 뒤 접촉 차단을 해제합니다.
+-- 이 시점에 이미 정류장 트리거와 겹쳐 있던 버스는 안내방송을 내지 않습니다.
+scanTriggerOverlaps()
+suppressInitialContacts = false
 
 local soundCount = 0
 for _ in pairs(announcementByStopId) do soundCount += 1 end
